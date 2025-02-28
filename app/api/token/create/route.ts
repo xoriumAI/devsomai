@@ -25,6 +25,7 @@ import {
 import bs58 from 'bs58';
 import { decrypt } from '@/lib/encryption';
 import { prisma } from '@/lib/prisma';
+import { getSettings } from '@/lib/settings';
 
 // Helper function to convert IPFS URI to HTTP URL
 function ipfsToHttp(uri: string): string {
@@ -41,7 +42,6 @@ export async function POST(req: Request) {
       description, 
       metadataUri: initialMetadataUri, 
       walletPublicKey, 
-      network,
       sendingMode,
       vanityTokenMint,
       decimals = 9,
@@ -54,7 +54,7 @@ export async function POST(req: Request) {
     console.log('Initial metadata URI:', metadataUri);
 
     // Input validation
-    if (!name || !symbol || !metadataUri || !walletPublicKey || !network) {
+    if (!name || !symbol || !metadataUri || !walletPublicKey) {
       return NextResponse.json(
         { error: "Missing required fields" },
         { status: 400 }
@@ -68,6 +68,11 @@ export async function POST(req: Request) {
         { status: 400 }
       );
     }
+
+    // Get current network settings
+    const settings = getSettings();
+    const networkEndpoint = settings.rpc.http;
+    const networkName = settings.network;
 
     // Convert IPFS URI to HTTP URL for verification
     const metadataUrl = ipfsToHttp(initialMetadataUri);
@@ -107,8 +112,9 @@ export async function POST(req: Request) {
     const privateKey = decrypt(wallet.encryptedPrivateKey);
     const payer = Keypair.fromSecretKey(bs58.decode(privateKey));
 
-    // Connect to Solana
-    const connection = new Connection(network, {
+    // Connect to Solana using the current network settings
+    console.log(`Connecting to ${networkName} at ${networkEndpoint}`);
+    const connection = new Connection(networkEndpoint, {
       commitment: "confirmed",
       confirmTransactionInitialTimeout: 60000
     });
@@ -253,7 +259,8 @@ export async function POST(req: Request) {
       metadataAddress: metadataAddress.toBase58(),
       signature,
       metadataUri,
-      httpUrl: ipfsToHttp(metadataUri)
+      httpUrl: ipfsToHttp(metadataUri),
+      network: networkName
     });
 
   } catch (error) {

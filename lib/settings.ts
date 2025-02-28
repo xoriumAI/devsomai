@@ -9,6 +9,7 @@ export interface Settings {
     maxRequestsPerMinute: number;
     maxConcurrentRequests: number;
   };
+  network: 'mainnet-beta' | 'devnet';
 }
 
 // Default settings
@@ -22,7 +23,8 @@ const defaultSettings: Settings = {
     maxRequestsPerSecond: 2,
     maxRequestsPerMinute: 50,
     maxConcurrentRequests: 3
-  }
+  },
+  network: 'mainnet-beta'
 };
 
 // Fallback RPC endpoints with rate limits
@@ -41,6 +43,15 @@ export const FALLBACK_ENDPOINTS = [
     http: 'https://rpc.ankr.com/solana',
     ws: 'wss://rpc.ankr.com/solana/ws',
     rateLimit: { maxRequestsPerSecond: 3, maxRequestsPerMinute: 100 }
+  }
+];
+
+// Devnet endpoints
+export const DEVNET_ENDPOINTS = [
+  {
+    http: 'https://api.devnet.solana.com',
+    ws: 'wss://api.devnet.solana.com',
+    rateLimit: { maxRequestsPerSecond: 4, maxRequestsPerMinute: 100 }
   }
 ];
 
@@ -295,7 +306,7 @@ async function testSingleWSEndpoint(endpoint: string): Promise<number> {
 
 // Load settings from localStorage if available
 export function loadSettings(): Settings {
-  if (typeof window === 'undefined') return defaultSettings;
+  if (typeof window === 'undefined') return serverSettings || defaultSettings;
   
   try {
     const savedSettings = localStorage.getItem('wallet-manager-settings');
@@ -309,14 +320,77 @@ export function loadSettings(): Settings {
   return defaultSettings;
 }
 
-// Save settings to localStorage
+// Server-side settings storage
+let serverSettings: Settings | null = null;
+
+// Get current settings
+export function getSettings(): Settings {
+  // For server-side code
+  if (typeof window === 'undefined') {
+    return serverSettings || defaultSettings;
+  }
+  
+  // For client-side code
+  return loadSettings();
+}
+
+// Update the switchNetwork function to also update server-side settings
+export function switchNetwork(network: 'mainnet-beta' | 'devnet') {
+  const settings = getSettings();
+  
+  // If already on the selected network, do nothing
+  if (settings.network === network) return settings;
+  
+  // Get appropriate endpoints for the selected network
+  let endpoint;
+  if (network === 'devnet') {
+    endpoint = DEVNET_ENDPOINTS[0];
+  } else {
+    endpoint = FALLBACK_ENDPOINTS[0];
+  }
+  
+  // Create updated settings
+  const updatedSettings = {
+    ...settings,
+    network,
+    rpc: {
+      http: endpoint.http,
+      ws: endpoint.ws,
+    }
+  };
+  
+  // Update server-side settings
+  serverSettings = updatedSettings;
+  
+  // Update client-side settings if in browser
+  if (typeof window !== 'undefined') {
+    localStorage.setItem('wallet-manager-settings', JSON.stringify(updatedSettings));
+    
+    // Force a reload of the page to ensure all components use the new network
+    window.location.reload();
+  }
+  
+  // Notify all listeners of the network change
+  settingsChangeCallbacks.forEach(callback => callback(updatedSettings));
+  
+  return updatedSettings;
+}
+
+// Update saveSettings to also update server-side settings
 export function saveSettings(settings: Partial<Settings>) {
-  if (typeof window === 'undefined') return;
+  if (typeof window === 'undefined') {
+    // Server-side: update server settings
+    serverSettings = { ...(serverSettings || defaultSettings), ...settings };
+    return serverSettings;
+  }
   
   try {
     const currentSettings = loadSettings();
     const newSettings = { ...currentSettings, ...settings };
     localStorage.setItem('wallet-manager-settings', JSON.stringify(newSettings));
+    
+    // Also update server-side settings
+    serverSettings = newSettings;
     
     // Notify all listeners of the settings change
     settingsChangeCallbacks.forEach(callback => callback(newSettings));
@@ -337,9 +411,4 @@ export function updateRPCEndpoints(http: string, ws?: string) {
       ws: wsEndpoint,
     },
   });
-}
-
-// Get current settings
-export function getSettings(): Settings {
-  return loadSettings();
 } 

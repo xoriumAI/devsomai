@@ -8,13 +8,7 @@ import { Search, Filter, Download, ExternalLink, Loader2, AlertCircle } from "lu
 import { Connection, PublicKey, ParsedTransactionWithMeta } from '@solana/web3.js';
 import { useToast } from "@/hooks/use-toast";
 import { useWalletStore } from "@/store/wallet-store";
-
-// Create connection with better timeout and commitment settings
-const SOLANA_RPC_URL = 'https://api.devnet.solana.com';
-const connection = new Connection(SOLANA_RPC_URL, {
-  commitment: 'confirmed',
-  confirmTransactionInitialTimeout: 60000,
-});
+import { getSettings } from "@/lib/settings";
 
 // Rate limiting configuration
 const RATE_LIMIT_CONFIG = {
@@ -67,9 +61,21 @@ export function TransactionHistory() {
   const [progress, setProgress] = useState({ current: 0, total: 0 });
   const [searchTerm, setSearchTerm] = useState("");
   const [error, setError] = useState<string | null>(null);
-  const { wallets } = useWalletStore();
+  const { wallets, connection, network } = useWalletStore();
   const { toast } = useToast();
   const abortControllerRef = useRef<AbortController | null>(null);
+
+  // Create a local connection if the store connection is not available
+  const getConnection = useCallback(() => {
+    if (connection) return connection;
+    
+    // Fallback to creating a new connection with current settings
+    const settings = getSettings();
+    return new Connection(settings.rpc.http, {
+      commitment: 'confirmed',
+      confirmTransactionInitialTimeout: 60000,
+    });
+  }, [connection]);
 
   // Get only active wallets
   const activeWallets = wallets.filter(w => !w.archived);
@@ -78,8 +84,9 @@ export function TransactionHistory() {
 
   const fetchWalletTransactions = useCallback(async (publicKey: string, retryCount = 0): Promise<ParsedTransactionWithMeta[]> => {
     try {
+      const conn = getConnection();
       await rateLimiter.consume();
-      const signatures = await connection.getSignaturesForAddress(
+      const signatures = await conn.getSignaturesForAddress(
         new PublicKey(publicKey),
         { limit: RATE_LIMIT_CONFIG.transactionsPerWallet }
       );
@@ -92,7 +99,7 @@ export function TransactionHistory() {
         
         try {
           await rateLimiter.consume();
-          const tx = await connection.getParsedTransaction(sig.signature);
+          const tx = await conn.getParsedTransaction(sig.signature);
           if (tx) txs.push(tx);
           await sleep(RATE_LIMIT_CONFIG.delayBetweenRequests);
         } catch (error) {

@@ -9,6 +9,8 @@ import { Download, Trash2 } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { decrypt } from "@/lib/encryption";
 import { useConnection } from "@/hooks/use-connection";
+import { NetworkToggle } from "@/components/network-toggle";
+import { DevnetNotice } from "@/components/devnet-notice";
 import {
   AlertDialog,
   AlertDialogAction,
@@ -181,7 +183,10 @@ export function WalletDashboard() {
   return (
     <div className="space-y-4">
       <div className="flex justify-between items-center mb-4">
-        <h2 className="text-3xl font-bold">Dashboard</h2>
+        <div className="flex items-center gap-4">
+          <h2 className="text-3xl font-bold">Dashboard</h2>
+          <NetworkToggle />
+        </div>
         <div className="space-x-2">
           <Button
             variant="outline"
@@ -209,6 +214,8 @@ export function WalletDashboard() {
           </Button>
         </div>
       </div>
+
+      <DevnetNotice />
 
       <AlertDialog open={showDeleteConfirm} onOpenChange={setShowDeleteConfirm}>
         <AlertDialogContent>

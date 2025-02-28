@@ -3,6 +3,7 @@
 import { Connection, Keypair, LAMPORTS_PER_SOL, PublicKey, Transaction, SystemProgram, Commitment } from '@solana/web3.js';
 import { withDB } from './db';
 import bs58 from 'bs58';
+import { getSettings } from './settings';
 
 // Enhanced token bucket with dynamic rate adjustment
 class TokenBucket {
@@ -183,18 +184,25 @@ class RateLimitedConnection {
   }
 
   async getFeeForMessage(message: Transaction | Uint8Array, commitment?: Commitment): Promise<number> {
-    const messageBytes = message instanceof Transaction 
-      ? message.compileMessage().serialize()
-      : message;
-      
-    const response = await this.enqueueRequest(() => 
-      this.connection.getFeeForMessage(messageBytes, commitment)
-    );
-    return response?.value ?? 5000; // Default to 5000 lamports if fee cannot be estimated
+    try {
+      const messageBytes = message instanceof Transaction 
+        ? message.compileMessage().serialize()
+        : message;
+        
+      const response = await this.enqueueRequest(() => 
+        this.connection.getFeeForMessage(messageBytes as any, commitment)
+      );
+      return response?.value ?? 5000; // Default to 5000 lamports if fee cannot be estimated
+    } catch (error) {
+      console.error('Error getting fee for message:', error);
+      return 5000; // Default to 5000 lamports if error occurs
+    }
   }
 }
 
-const SOLANA_RPC_URL = 'https://solana-api.instantnodes.io/token-RRGPc9gLXCcxjGKwzEwf4RQ9ejdocJum';
+// Initialize connection with current network settings
+const settings = getSettings();
+const SOLANA_RPC_URL = settings.rpc.http;
 const connection = new RateLimitedConnection(SOLANA_RPC_URL);
 
 export type WalletGroup = 'main' | 'bundles' | 'sniper' | 'dev' | 'cex';
@@ -416,6 +424,19 @@ export async function sendSOL(fromPublicKey: string, toPublicKey: string, amount
     if (lamports <= 0) {
       throw new Error('Invalid amount');
     }
+
+    // Get current network settings
+    const settings = getSettings();
+    const networkEndpoint = settings.rpc.http;
+    const networkName = settings.network;
+    
+    console.log(`Using ${networkName} at ${networkEndpoint} for transaction`);
+    
+    // Create connection with current network settings
+    const connection = new Connection(networkEndpoint, {
+      commitment: "confirmed",
+      confirmTransactionInitialTimeout: 60000
+    });
 
     // Create transaction
     const fromKeypair = Keypair.fromSecretKey(bs58.decode(senderWallet.encryptedPrivateKey));

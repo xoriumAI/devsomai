@@ -15,6 +15,8 @@ import { CEXWalletDialog } from "./cex-wallet-dialog";
 import { SendToCEXDialog } from "./send-to-cex-dialog";
 import { SendSolDialog } from "./send-sol-dialog";
 import { swapTokenPercentage } from "./bundle-token-swap";
+import { AirdropButton } from "./airdrop-button";
+import { SplTokenChecker } from "./spl-token-checker";
 
 export function WalletList() {
   const { wallets, isLoading, refreshBalances, getPrivateKey, toggleArchive, loadWallets, stopAutoRefresh } = useWalletStore();
@@ -268,11 +270,20 @@ export function WalletList() {
                           senderBalance={wallet.balance}
                         />
                       )}
+                      {/* SPL Token Checker for all wallets */}
+                      <SplTokenChecker 
+                        publicKey={wallet.publicKey}
+                        walletName={wallet.name}
+                      />
                       {activeGroup !== 'cex' && (
                         <>
                           <SendSolDialog
                             senderPublicKey={wallet.publicKey}
                             senderBalance={wallet.balance}
+                          />
+                          <AirdropButton 
+                            publicKey={wallet.publicKey} 
+                            onSuccess={refreshBalances}
                           />
                           <Button
                             variant="outline"

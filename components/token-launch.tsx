@@ -30,6 +30,7 @@ import {
 } from "@solana/spl-token";
 import bs58 from "bs58";
 import { decrypt } from "@/lib/encryption";
+import { Badge } from "@/components/ui/badge";
 
 const MODES = [
   { value: "experimental", label: "Experimental" },
@@ -61,9 +62,10 @@ export function TokenLaunch() {
   const [isLoading, setIsLoading] = useState(false);
   const [imageFile, setImageFile] = useState<File | null>(null);
   const [imagePreview, setImagePreview] = useState<string | null>(null);
-  const fileInputRef = useRef<HTMLInputElement>(null);
-  const { wallets } = useWalletStore();
+  const [tokenAddress, setTokenAddress] = useState<string | null>(null);
+  const { wallets, network } = useWalletStore();
   const { toast } = useToast();
+  const fileInputRef = useRef<HTMLInputElement>(null);
 
   const activeWallets = wallets.filter(w => !w.archived && w.encryptedPrivateKey && w.groupName === 'dev');
 
@@ -213,7 +215,7 @@ export function TokenLaunch() {
           description,
           metadataUri,
           walletPublicKey: activeWallets[0].publicKey,
-          network: mode === "experimental" ? ENDPOINTS.devnet : ENDPOINTS.mainnet,
+          network: network === 'devnet' ? ENDPOINTS.devnet : ENDPOINTS.mainnet,
           sendingMode,
           vanityTokenMint,
           decimals: 9, // Standard decimals for Solana tokens
@@ -264,197 +266,206 @@ export function TokenLaunch() {
   };
 
   return (
-    <div className="container mx-auto p-4">
-      <Card className="w-full max-w-2xl mx-auto">
-        <CardHeader>
-          <CardTitle>Manage Launch</CardTitle>
-        </CardHeader>
-        <CardContent className="space-y-4">
-          <div className="grid grid-cols-2 gap-4">
-            <div className="space-y-2">
-              <Label>Mode</Label>
-              <Select value={mode} onValueChange={setMode}>
-                <SelectTrigger>
-                  <SelectValue placeholder="Select mode" />
-                </SelectTrigger>
-                <SelectContent>
-                  {MODES.map((mode) => (
-                    <SelectItem key={mode.value} value={mode.value}>
-                      {mode.label}
-                    </SelectItem>
-                  ))}
-                </SelectContent>
-              </Select>
+    <div className="space-y-6">
+      <div className="flex justify-between items-center">
+        <h2 className="text-3xl font-bold">Token Launch</h2>
+        <Badge variant={network === 'devnet' ? "outline" : "default"}>
+          {network === 'devnet' ? "Devnet" : "Mainnet"}
+        </Badge>
+      </div>
+
+      <div className="container mx-auto p-4">
+        <Card className="w-full max-w-2xl mx-auto">
+          <CardHeader>
+            <CardTitle>Manage Launch</CardTitle>
+          </CardHeader>
+          <CardContent className="space-y-4">
+            <div className="grid grid-cols-2 gap-4">
+              <div className="space-y-2">
+                <Label>Mode</Label>
+                <Select value={mode} onValueChange={setMode}>
+                  <SelectTrigger>
+                    <SelectValue placeholder="Select mode" />
+                  </SelectTrigger>
+                  <SelectContent>
+                    {MODES.map((mode) => (
+                      <SelectItem key={mode.value} value={mode.value}>
+                        {mode.label}
+                      </SelectItem>
+                    ))}
+                  </SelectContent>
+                </Select>
+              </div>
+
+              <div className="space-y-2">
+                <Label>Sending Mode</Label>
+                <Select value={sendingMode} onValueChange={setSendingMode}>
+                  <SelectTrigger>
+                    <SelectValue placeholder="Select sending mode" />
+                  </SelectTrigger>
+                  <SelectContent>
+                    {SENDING_MODES.map((mode) => (
+                      <SelectItem key={mode.value} value={mode.value}>
+                        {mode.label}
+                      </SelectItem>
+                    ))}
+                  </SelectContent>
+                </Select>
+              </div>
             </div>
 
             <div className="space-y-2">
-              <Label>Sending Mode</Label>
-              <Select value={sendingMode} onValueChange={setSendingMode}>
-                <SelectTrigger>
-                  <SelectValue placeholder="Select sending mode" />
-                </SelectTrigger>
-                <SelectContent>
-                  {SENDING_MODES.map((mode) => (
-                    <SelectItem key={mode.value} value={mode.value}>
-                      {mode.label}
-                    </SelectItem>
-                  ))}
-                </SelectContent>
-              </Select>
-            </div>
-          </div>
-
-          <div className="space-y-2">
-            <div className="flex items-center justify-between">
-              <Label>Vanity Token Mint</Label>
-              <Switch
-                checked={vanityTokenMint}
-                onCheckedChange={setVanityTokenMint}
-              />
-            </div>
-          </div>
-
-          <div className="space-y-2">
-            <Label>Token Name</Label>
-            <Input
-              placeholder="Fortune And Greed"
-              value={name}
-              onChange={(e) => setName(e.target.value)}
-              disabled={isLoading}
-            />
-          </div>
-
-          <div className="space-y-2">
-            <Label>Token Symbol</Label>
-            <Input
-              placeholder="GREED"
-              value={symbol}
-              onChange={(e) => setSymbol(e.target.value.toUpperCase())}
-              disabled={isLoading}
-            />
-          </div>
-
-          <div className="space-y-2">
-            <Label>Token Description</Label>
-            <Input
-              placeholder="Is greed still good?"
-              value={description}
-              onChange={(e) => setDescription(e.target.value)}
-              disabled={isLoading}
-            />
-          </div>
-
-          <div className="grid grid-cols-3 gap-4">
-            <div className="space-y-2">
-              <Label>Twitter</Label>
-              <Input
-                placeholder="https://x.com/search?q="
-                value={twitter}
-                onChange={(e) => setTwitter(e.target.value)}
-                disabled={isLoading}
-              />
-            </div>
-
-            <div className="space-y-2">
-              <Label>Telegram</Label>
-              <Input
-                placeholder="Telegram link"
-                value={telegram}
-                onChange={(e) => setTelegram(e.target.value)}
-                disabled={isLoading}
-              />
-            </div>
-
-            <div className="space-y-2">
-              <Label>Website</Label>
-              <Input
-                placeholder="Website URL"
-                value={website}
-                onChange={(e) => setWebsite(e.target.value)}
-                disabled={isLoading}
-              />
-            </div>
-          </div>
-
-          <div className="space-y-2">
-            <Label>Launch Delay (ms)</Label>
-            <Input
-              type="number"
-              min="0"
-              placeholder="5000"
-              value={launchDelay}
-              onChange={(e) => setLaunchDelay(e.target.value)}
-              disabled={isLoading}
-            />
-          </div>
-
-          <div className="space-y-2">
-            <input
-              type="file"
-              accept="image/*"
-              className="hidden"
-              ref={fileInputRef}
-              onChange={handleImageUpload}
-              disabled={isLoading}
-            />
-            <Button
-              onClick={() => fileInputRef.current?.click()}
-              disabled={isLoading}
-              className="w-full bg-secondary hover:bg-secondary/90"
-            >
-              {imageFile ? 'Change Image' : 'Upload Image'}
-            </Button>
-            {imagePreview && (
-              <div className="mt-2">
-                <img
-                  src={imagePreview}
-                  alt="Token preview"
-                  className="max-w-full h-auto rounded-lg"
-                  style={{ maxHeight: '200px' }}
+              <div className="flex items-center justify-between">
+                <Label>Vanity Token Mint</Label>
+                <Switch
+                  checked={vanityTokenMint}
+                  onCheckedChange={setVanityTokenMint}
                 />
               </div>
+            </div>
+
+            <div className="space-y-2">
+              <Label>Token Name</Label>
+              <Input
+                placeholder="Fortune And Greed"
+                value={name}
+                onChange={(e) => setName(e.target.value)}
+                disabled={isLoading}
+              />
+            </div>
+
+            <div className="space-y-2">
+              <Label>Token Symbol</Label>
+              <Input
+                placeholder="GREED"
+                value={symbol}
+                onChange={(e) => setSymbol(e.target.value.toUpperCase())}
+                disabled={isLoading}
+              />
+            </div>
+
+            <div className="space-y-2">
+              <Label>Token Description</Label>
+              <Input
+                placeholder="Is greed still good?"
+                value={description}
+                onChange={(e) => setDescription(e.target.value)}
+                disabled={isLoading}
+              />
+            </div>
+
+            <div className="grid grid-cols-3 gap-4">
+              <div className="space-y-2">
+                <Label>Twitter</Label>
+                <Input
+                  placeholder="https://x.com/search?q="
+                  value={twitter}
+                  onChange={(e) => setTwitter(e.target.value)}
+                  disabled={isLoading}
+                />
+              </div>
+
+              <div className="space-y-2">
+                <Label>Telegram</Label>
+                <Input
+                  placeholder="Telegram link"
+                  value={telegram}
+                  onChange={(e) => setTelegram(e.target.value)}
+                  disabled={isLoading}
+                />
+              </div>
+
+              <div className="space-y-2">
+                <Label>Website</Label>
+                <Input
+                  placeholder="Website URL"
+                  value={website}
+                  onChange={(e) => setWebsite(e.target.value)}
+                  disabled={isLoading}
+                />
+              </div>
+            </div>
+
+            <div className="space-y-2">
+              <Label>Launch Delay (ms)</Label>
+              <Input
+                type="number"
+                min="0"
+                placeholder="5000"
+                value={launchDelay}
+                onChange={(e) => setLaunchDelay(e.target.value)}
+                disabled={isLoading}
+              />
+            </div>
+
+            <div className="space-y-2">
+              <input
+                type="file"
+                accept="image/*"
+                className="hidden"
+                ref={fileInputRef}
+                onChange={handleImageUpload}
+                disabled={isLoading}
+              />
+              <Button
+                onClick={() => fileInputRef.current?.click()}
+                disabled={isLoading}
+                className="w-full bg-secondary hover:bg-secondary/90"
+              >
+                {imageFile ? 'Change Image' : 'Upload Image'}
+              </Button>
+              {imagePreview && (
+                <div className="mt-2">
+                  <img
+                    src={imagePreview}
+                    alt="Token preview"
+                    className="max-w-full h-auto rounded-lg"
+                    style={{ maxHeight: '200px' }}
+                  />
+                </div>
+              )}
+            </div>
+
+            {network === "devnet" && (
+              <Alert>
+                <AlertTitle>Devnet Mode</AlertTitle>
+                <AlertDescription>
+                  You are in devnet mode. Tokens will be created on the Solana Devnet.
+                  Make sure you have enough devnet SOL.
+                </AlertDescription>
+              </Alert>
             )}
-          </div>
 
-          {mode === "experimental" && (
-            <Alert>
-              <AlertTitle>Experimental Mode</AlertTitle>
-              <AlertDescription>
-                You are in experimental mode. Tokens will be created on the Devnet.
-                Make sure you have enough devnet SOL.
-              </AlertDescription>
-            </Alert>
-          )}
+            <div className="flex justify-between gap-4">
+              <Button
+                variant="secondary"
+                className="flex-1"
+                onClick={handleClear}
+                disabled={isLoading}
+              >
+                Clear
+              </Button>
 
-          <div className="flex justify-between gap-4">
-            <Button
-              variant="secondary"
-              className="flex-1"
-              onClick={handleClear}
-              disabled={isLoading}
-            >
-              Clear
-            </Button>
+              <Button
+                className="flex-1"
+                onClick={handleCreateToken}
+                disabled={isLoading}
+              >
+                {isLoading ? "Creating..." : "Save"}
+              </Button>
 
-            <Button
-              className="flex-1"
-              onClick={handleCreateToken}
-              disabled={isLoading}
-            >
-              {isLoading ? "Creating..." : "Save"}
-            </Button>
-
-            <Button
-              variant="destructive"
-              className="flex-1"
-              onClick={handleClear}
-              disabled={isLoading}
-            >
-              Cancel
-            </Button>
-          </div>
-        </CardContent>
-      </Card>
+              <Button
+                variant="destructive"
+                className="flex-1"
+                onClick={handleClear}
+                disabled={isLoading}
+              >
+                Cancel
+              </Button>
+            </div>
+          </CardContent>
+        </Card>
+      </div>
     </div>
   );
 } 

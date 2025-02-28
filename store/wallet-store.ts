@@ -1,7 +1,7 @@
 import { create } from 'zustand';
 import { WalletGroup } from '@/lib/wallet';
 import { Connection, PublicKey, Commitment } from '@solana/web3.js';
-import { getSettings, loadSettings, getRateLimiter } from '@/lib/settings';
+import { getSettings, loadSettings, getRateLimiter, switchNetwork as switchNetworkSetting } from '@/lib/settings';
 
 interface Wallet {
   publicKey: string;
@@ -20,6 +20,7 @@ interface WalletStore {
   error: string | null;
   connection: Connection | null;
   isConnected: boolean;
+  network: 'mainnet-beta' | 'devnet';
   startAutoRefresh: () => void;
   stopAutoRefresh: () => void;
   createWallet: (name?: string, group?: WalletGroup) => Promise<void>;
@@ -33,6 +34,7 @@ interface WalletStore {
   sendSOL: (fromPublicKey: string, toPublicKey: string, amount: number) => Promise<void>;
   updateWalletBalance: (publicKey: string, balance: number) => void;
   addWallet: (wallet: { publicKey: string; privateKey: string; name: string; groupName: string; }) => Promise<void>;
+  switchNetwork: (network: 'mainnet-beta' | 'devnet') => void;
 }
 
 let autoRefreshInterval: NodeJS.Timeout | null = null;
@@ -45,6 +47,7 @@ export const useWalletStore = create<WalletStore>((set, get) => ({
   error: null,
   connection: null,
   isConnected: false,
+  network: getSettings().network,
 
   updateWalletBalance: (publicKey: string, balance: number) => {
     const { wallets } = get();
@@ -70,7 +73,11 @@ export const useWalletStore = create<WalletStore>((set, get) => ({
         confirmTransactionInitialTimeout: 60000,
       });
 
-      set({ connection: rpcConnection, isConnected: true });
+      set({ 
+        connection: rpcConnection, 
+        isConnected: true,
+        network: settings.network
+      });
 
       // Subscribe to account changes for all wallets
       const { wallets, updateWalletBalance } = get();
@@ -402,5 +409,44 @@ export const useWalletStore = create<WalletStore>((set, get) => ({
     } finally {
       set({ isLoading: false });
     }
+  },
+
+  switchNetwork: (network: 'mainnet-beta' | 'devnet') => {
+    // Stop auto-refresh to disconnect current connections
+    get().stopAutoRefresh();
+    
+    // Check if this is a user preference
+    const isUserPreference = typeof window !== 'undefined' && 
+      localStorage.getItem('user-network-preference') === network;
+    
+    // Make a server-side API call to switch network
+    fetch('/api/settings/network', {
+      method: 'POST',
+      headers: {
+        'Content-Type': 'application/json',
+      },
+      body: JSON.stringify({ network, isUserPreference }),
+    })
+    .then(response => {
+      if (!response.ok) {
+        throw new Error('Failed to switch network on server');
+      }
+      return response.json();
+    })
+    .then(() => {
+      console.log(`Network switched to ${network} on server (User preference: ${isUserPreference})`);
+    })
+    .catch(error => {
+      console.error('Error switching network on server:', error);
+    });
+    
+    // Update store state
+    set({ network });
+    
+    // Restart auto-refresh with new network settings
+    get().startAutoRefresh();
+    
+    // Refresh balances with new network
+    get().refreshBalances();
   },
 }));

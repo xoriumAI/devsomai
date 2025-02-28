@@ -1,6 +1,6 @@
 "use client";
 
-import { useState } from "react";
+import { useState, useCallback, useEffect } from "react";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent } from "@/components/ui/card";
 import { Loader2, RefreshCcw, ArrowRight, Coins } from "lucide-react";
@@ -11,13 +11,7 @@ import { TOKEN_PROGRAM_ID, getAssociatedTokenAddress, createAssociatedTokenAccou
 import bs58 from 'bs58';
 import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogDescription, DialogFooter } from "@/components/ui/dialog";
 import { AlertDialog, AlertDialogContent, AlertDialogHeader, AlertDialogTitle, AlertDialogDescription, AlertDialogFooter, AlertDialogCancel, AlertDialogAction } from "@/components/ui/alert-dialog";
-
-const SOLANA_RPC_URL = "https://solana-api.instantnodes.io/token-RRGPc9gLXCcxjGKwzEwf4RQ9ejdocJum";
-const connection = new Connection(SOLANA_RPC_URL, {
-  commitment: 'confirmed',
-  confirmTransactionInitialTimeout: 60000,
-  wsEndpoint: 'wss://solana-api.instantnodes.io/token-RRGPc9gLXCcxjGKwzEwf4RQ9ejdocJum'
-});
+import { getSettings } from "@/lib/settings";
 
 interface TokenBalance {
   mint: string;
@@ -91,7 +85,7 @@ function SwapConfirmationDialog({ open, onOpenChange, onConfirm, tokenInfo, isLo
 export async function swapTokenPercentage(
   walletPublicKey: string,
   percentage: number,
-  getPrivateKey: (publicKey: string) => Promise<string>,
+  getPrivateKey: (publicKey: string) => Promise<string | null>,
   toast: any
 ) {
   if (!walletPublicKey) {
@@ -112,6 +106,13 @@ export async function swapTokenPercentage(
       if (!privateKey) {
         throw new Error("Private key not found");
       }
+
+      // Create connection
+      const settings = getSettings();
+      const connection = new Connection(settings.rpc.http, {
+        commitment: 'confirmed',
+        confirmTransactionInitialTimeout: 60000,
+      });
 
       // Validate private key format
       try {
@@ -257,48 +258,55 @@ export async function swapTokenPercentage(
 }
 
 export function BundleTokenSwap() {
+  const [tokenBalances, setTokenBalances] = useState<TokenBalance[]>([]);
   const [isLoading, setIsLoading] = useState(false);
-  const [tokenBalances, setTokenBalances] = useState<Record<string, TokenBalance[]>>({});
-  const [swapConfirmation, setSwapConfirmation] = useState<{
-    open: boolean;
-    tokenInfo: {
-      amount: number;
-      decimals: number;
-      mint: string;
-      percentage: number;
-    } | null;
-    walletPublicKey: string | null;
-  }>({
-    open: false,
-    tokenInfo: null,
-    walletPublicKey: null,
-  });
-  const { wallets, getPrivateKey } = useWalletStore();
+  const [isSwapping, setIsSwapping] = useState(false);
+  const [confirmDialogOpen, setConfirmDialogOpen] = useState(false);
+  const [selectedToken, setSelectedToken] = useState<TokenBalance | null>(null);
+  const [selectedPercentage, setSelectedPercentage] = useState(100);
+  const { wallets, getPrivateKey, connection: storeConnection, network } = useWalletStore();
   const { toast } = useToast();
 
-  const bundleWallets = wallets.filter(w => w.groupName === 'bundles' && !w.archived);
-  const firstWallet = bundleWallets[0];
+  // Create a local connection if the store connection is not available
+  const getConnection = useCallback(() => {
+    if (storeConnection) return storeConnection;
+    
+    // Fallback to creating a new connection with current settings
+    const settings = getSettings();
+    return new Connection(settings.rpc.http, {
+      commitment: 'confirmed',
+      confirmTransactionInitialTimeout: 60000,
+    });
+  }, [storeConnection]);
 
   const fetchTokenBalances = async () => {
-    setIsLoading(true);
-    const newTokenBalances: Record<string, TokenBalance[]> = {};
+    const activeWallets = wallets.filter(w => !w.archived && w.groupName === 'bundles');
+    
+    if (activeWallets.length === 0) {
+      toast({
+        title: "No Bundle Wallets",
+        description: "Please create wallets in the 'bundles' group first",
+        variant: "destructive",
+      });
+      return;
+    }
 
     try {
-      for (const wallet of bundleWallets) {
-        const walletTokens: TokenBalance[] = [];
-        
-        // Add delay between each wallet's token fetch
-        await delay(2000);
+      setIsLoading(true);
+      const connection = getConnection();
+      const allTokens: TokenBalance[] = [];
 
+      for (const wallet of activeWallets) {
         try {
+          const publicKey = new PublicKey(wallet.publicKey);
           const tokenAccounts = await connection.getParsedTokenAccountsByOwner(
-            new PublicKey(wallet.publicKey),
+            publicKey,
             { programId: TOKEN_PROGRAM_ID }
           );
 
           for (const account of tokenAccounts.value) {
             if (account.account.data.parsed.info.tokenAmount.uiAmount > 0) {
-              walletTokens.push({
+              allTokens.push({
                 mint: account.account.data.parsed.info.mint,
                 amount: account.account.data.parsed.info.tokenAmount.uiAmount,
                 decimals: account.account.data.parsed.info.tokenAmount.decimals,
@@ -306,10 +314,10 @@ export function BundleTokenSwap() {
             }
           }
 
-          if (walletTokens.length > 0) {
+          if (allTokens.length > 0) {
             // Sort tokens by amount value (highest first)
-            walletTokens.sort((a, b) => b.amount - a.amount);
-            newTokenBalances[wallet.publicKey] = walletTokens;
+            allTokens.sort((a, b) => b.amount - a.amount);
+            setTokenBalances(allTokens);
           }
         } catch (error) {
           console.warn(`Error fetching tokens for wallet ${wallet.publicKey}:`, error);
@@ -318,9 +326,7 @@ export function BundleTokenSwap() {
         }
       }
 
-      setTokenBalances(newTokenBalances);
-      
-      if (Object.keys(newTokenBalances).length === 0) {
+      if (allTokens.length === 0) {
         toast({
           title: "No tokens found",
           description: "No SPL tokens found in bundle wallets",
@@ -339,10 +345,10 @@ export function BundleTokenSwap() {
   };
 
   const sendAllToFirstWallet = async () => {
-    if (!firstWallet) {
+    if (tokenBalances.length === 0) {
       toast({
         title: "Error",
-        description: "No destination wallet found in bundle group",
+        description: "No tokens to send",
         variant: "destructive",
       });
       return;
@@ -350,138 +356,93 @@ export function BundleTokenSwap() {
 
     setIsLoading(true);
     try {
+      const connection = getConnection();
+      const firstWallet = wallets.find(w => !w.archived && w.groupName === 'bundles');
+      if (!firstWallet) {
+        throw new Error("No destination wallet found in bundle group");
+      }
+
       const destinationPubkey = new PublicKey(firstWallet.publicKey);
 
-      for (const [walletPublicKey, tokens] of Object.entries(tokenBalances)) {
-        // Skip the first wallet as it's the destination
-        if (walletPublicKey === firstWallet.publicKey) continue;
+      for (const token of tokenBalances) {
+        try {
+          // Add delay between token transfers
+          await delay(2000);
 
-        const privateKey = await getPrivateKey(walletPublicKey);
-        if (!privateKey) {
-          console.warn(`Private key not found for wallet ${walletPublicKey}`);
-          continue;
-        }
+          const sourceATA = await getAssociatedTokenAddress(
+            new PublicKey(token.mint),
+            new PublicKey(firstWallet.publicKey)
+          );
 
-        const sourceKeypair = Keypair.fromSecretKey(bs58.decode(privateKey));
+          const destinationATA = await getAssociatedTokenAddress(
+            new PublicKey(token.mint),
+            destinationPubkey
+          );
 
-        for (const token of tokens) {
-          try {
-            // Add delay between token transfers
-            await delay(2000);
+          // Check if destination token account exists
+          const destinationAccount = await connection.getAccountInfo(destinationATA);
 
-            const sourceATA = await getAssociatedTokenAddress(
-              new PublicKey(token.mint),
-              sourceKeypair.publicKey
-            );
+          // Create transaction
+          const transaction = new Transaction();
 
-            const destinationATA = await getAssociatedTokenAddress(
-              new PublicKey(token.mint),
-              destinationPubkey
-            );
-
-            // Check if destination account exists
-            const destinationAccount = await connection.getAccountInfo(destinationATA);
-            
-            const transaction = new Transaction();
-
-            // Create destination ATA if it doesn't exist
-            if (!destinationAccount) {
-              transaction.add(
-                createAssociatedTokenAccountInstruction(
-                  sourceKeypair.publicKey,
-                  destinationATA,
-                  destinationPubkey,
-                  new PublicKey(token.mint)
-                )
-              );
-            }
-
-            // Add transfer instruction
+          // If destination token account doesn't exist, create it
+          if (!destinationAccount) {
             transaction.add(
-              createTransferInstruction(
-                sourceATA,
+              createAssociatedTokenAccountInstruction(
+                new PublicKey(firstWallet.publicKey),
                 destinationATA,
-                sourceKeypair.publicKey,
-                token.amount * Math.pow(10, token.decimals)
+                destinationPubkey,
+                new PublicKey(token.mint)
               )
             );
-
-            const signature = await connection.sendTransaction(transaction, [sourceKeypair]);
-            await connection.confirmTransaction(signature);
-
-            toast({
-              title: "Transfer successful",
-              description: `Transferred ${token.amount} tokens (${token.mint.slice(0, 8)}...) to first wallet`,
-            });
-
-            // Add delay after successful transfer
-            await delay(2000);
-          } catch (error) {
-            console.error(`Error transferring token ${token.mint}:`, error);
-            toast({
-              title: "Error",
-              description: `Failed to transfer token ${token.mint.slice(0, 8)}...`,
-              variant: "destructive",
-            });
-            // Add delay after error before continuing
-            await delay(5000);
           }
+
+          // Add transfer instruction
+          transaction.add(
+            createTransferInstruction(
+              sourceATA,
+              destinationATA,
+              new PublicKey(firstWallet.publicKey),
+              token.amount * Math.pow(10, token.decimals)
+            )
+          );
+
+          const signature = await connection.sendTransaction(transaction, [new Keypair()]);
+          await connection.confirmTransaction(signature);
+
+          toast({
+            title: "Transfer Complete",
+            description: `Transferred ${token.amount.toFixed(token.decimals)} tokens to first wallet`,
+          });
+        } catch (error) {
+          console.error(`Error transferring token ${token.mint}:`, error);
+          toast({
+            title: "Transfer Error",
+            description: `Failed to transfer token ${token.mint.slice(0, 8)}...`,
+            variant: "destructive",
+          });
+          // Add delay after error before continuing
+          await delay(5000);
         }
       }
     } catch (error) {
-      console.error('Error in transfer process:', error);
+      console.error('Error sending tokens to first wallet:', error);
       toast({
         title: "Error",
-        description: "Failed to complete token transfers",
+        description: "Failed to send tokens to first wallet",
         variant: "destructive",
       });
     } finally {
       setIsLoading(false);
-      fetchTokenBalances(); // Refresh balances after transfers
     }
   };
 
-  const handlePercentageClick = async (wallet: any, percentage: number) => {
+  const handlePercentageClick = async (token: TokenBalance, percentage: number) => {
     try {
-      // Get token accounts to show in confirmation
-      const tokenAccounts = await connection.getParsedTokenAccountsByOwner(
-        new PublicKey(wallet.publicKey),
-        { programId: TOKEN_PROGRAM_ID }
-      );
-
-      if (!tokenAccounts?.value || tokenAccounts.value.length === 0) {
-        throw new Error("No token accounts found in this wallet");
-      }
-
-      // Find highest value token
-      let highestValueToken = null;
-      let highestValue = 0;
-
-      for (const account of tokenAccounts.value) {
-        const amount = account.account.data.parsed.info.tokenAmount.uiAmount;
-        if (amount > highestValue) {
-          highestValue = amount;
-          highestValueToken = {
-            mint: account.account.data.parsed.info.mint,
-            amount: amount,
-            decimals: account.account.data.parsed.info.tokenAmount.decimals,
-          };
-        }
-      }
-
-      if (!highestValueToken) {
-        throw new Error("No tokens with positive balance found in wallet");
-      }
-
       // Show confirmation dialog
-      setSwapConfirmation({
-        open: true,
-        tokenInfo: {
-          ...highestValueToken,
-          percentage,
-        },
-        walletPublicKey: wallet.publicKey,
-      });
+      setSelectedToken(token);
+      setSelectedPercentage(percentage);
+      setConfirmDialogOpen(true);
     } catch (error) {
       toast({
         title: "Error",
@@ -492,124 +453,126 @@ export function BundleTokenSwap() {
   };
 
   const handleSwapConfirm = async () => {
-    if (!swapConfirmation.walletPublicKey || !swapConfirmation.tokenInfo) return;
+    if (!selectedToken) return;
 
     setIsLoading(true);
     try {
       await swapTokenPercentage(
-        swapConfirmation.walletPublicKey,
-        swapConfirmation.tokenInfo.percentage,
+        selectedToken.mint,
+        selectedPercentage,
         getPrivateKey,
         toast
       );
-      // Refresh token balances after successful swap
-      await fetchTokenBalances();
+      fetchTokenBalances();
     } catch (error) {
       toast({
-        title: "Error",
+        title: "Swap Failed",
         description: error instanceof Error ? error.message : "Failed to swap tokens",
         variant: "destructive",
       });
     } finally {
       setIsLoading(false);
-      setSwapConfirmation(prev => ({ ...prev, open: false }));
+      setConfirmDialogOpen(false);
     }
   };
 
+  useEffect(() => {
+    fetchTokenBalances();
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
+
   return (
-    <>
-      <Card className="mb-4">
-        <CardContent className="pt-6">
-          <div className="flex justify-between items-center mb-4">
-            <div className="space-y-1">
-              <h3 className="text-lg font-medium">Bundle Tokens</h3>
-              <p className="text-sm text-muted-foreground">
-                Manage SPL tokens in bundle wallets
-              </p>
-            </div>
-            <div className="space-x-2">
-              <Button
-                variant="outline"
-                onClick={fetchTokenBalances}
-                disabled={isLoading || bundleWallets.length === 0}
-              >
-                <RefreshCcw className="mr-2 h-4 w-4" />
-                Scan Tokens
-              </Button>
-              <Button
-                variant="outline"
-                onClick={sendAllToFirstWallet}
-                disabled={isLoading || Object.keys(tokenBalances).length === 0 || !firstWallet}
-              >
-                <ArrowRight className="mr-2 h-4 w-4" />
-                Send All to First Wallet
-              </Button>
-              <Button
-                onClick={() => {}} // Placeholder for swap functionality
-                disabled={isLoading || Object.keys(tokenBalances).length === 0}
-              >
-                <Coins className="mr-2 h-4 w-4" />
-                Swap All to SOL
-              </Button>
-            </div>
+    <Card>
+      <CardContent className="p-6">
+        <div className="space-y-6">
+          <div className="flex flex-col space-y-2">
+            <h2 className="text-2xl font-bold">Bundle Token Management</h2>
+            <p className="text-muted-foreground">
+              Manage SPL tokens across your bundle wallets
+            </p>
           </div>
 
-          {Object.keys(tokenBalances).length > 0 ? (
-            <div className="space-y-4">
-              {Object.entries(tokenBalances).map(([walletPublicKey, tokens]) => {
-                const wallet = bundleWallets.find(w => w.publicKey === walletPublicKey);
-                const displayTokens = tokens.slice(0, 3);
-                const remainingCount = tokens.length - 3;
+          <div className="flex flex-wrap gap-2">
+            <Button
+              variant="outline"
+              onClick={fetchTokenBalances}
+              disabled={isLoading || wallets.filter(w => !w.archived && w.groupName === 'bundles').length === 0}
+            >
+              <RefreshCcw className="mr-2 h-4 w-4" />
+              {isLoading ? "Scanning..." : "Scan Tokens"}
+            </Button>
+            <Button
+              variant="outline"
+              onClick={sendAllToFirstWallet}
+              disabled={isLoading || tokenBalances.length === 0 || !wallets.find(w => !w.archived && w.groupName === 'bundles')}
+            >
+              <ArrowRight className="mr-2 h-4 w-4" />
+              Send All to First Wallet
+            </Button>
+            <Button
+              onClick={() => {}} // Placeholder for swap functionality
+              disabled={isLoading || tokenBalances.length === 0}
+            >
+              <Coins className="mr-2 h-4 w-4" />
+              Swap All to SOL
+            </Button>
+          </div>
 
-                return (
-                  <div key={walletPublicKey} className="border rounded-lg p-4">
-                    <div className="flex justify-between items-start mb-2">
-                      <div>
-                        <h4 className="font-medium">
-                          {wallet?.name || `Wallet ${walletPublicKey.slice(0, 8)}...`}
-                        </h4>
-                        <p className="text-sm text-muted-foreground">
-                          {walletPublicKey.slice(0, 12)}...
-                        </p>
-                      </div>
-                      <p className="font-medium">{wallet?.balance.toFixed(4)} SOL</p>
+          {isLoading && (
+            <div className="flex items-center justify-center py-8">
+              <Loader2 className="h-8 w-8 animate-spin text-muted-foreground" />
+              <span className="ml-2 text-muted-foreground">Loading token data...</span>
+            </div>
+          )}
+
+          {tokenBalances.length > 0 ? (
+            <div className="space-y-4">
+              {tokenBalances.map((token, index) => (
+                <div key={index} className="border rounded-lg p-4">
+                  <div className="flex justify-between items-start mb-2">
+                    <div>
+                      <h4 className="font-medium">
+                        {wallets.find(w => !w.archived && w.groupName === 'bundles' && w.publicKey === token.mint)?.name || `Wallet ${token.mint.slice(0, 8)}...`}
+                      </h4>
+                      <p className="text-sm text-muted-foreground">
+                        {token.mint.slice(0, 12)}...
+                      </p>
                     </div>
-                    <div className="space-y-2">
-                      {displayTokens.map((token, index) => (
-                        <div key={index} className="flex justify-between text-sm">
-                          <span className="font-mono">
-                            {token.mint.slice(0, 8)}...
-                          </span>
-                          <span>{token.amount.toFixed(token.decimals)} tokens</span>
-                        </div>
-                      ))}
-                      {remainingCount > 0 && (
-                        <p className="text-sm text-muted-foreground">
-                          +{remainingCount} more tokens
-                        </p>
-                      )}
+                    <p className="font-medium">{wallets.find(w => !w.archived && w.groupName === 'bundles' && w.publicKey === token.mint)?.balance.toFixed(4)} SOL</p>
+                  </div>
+                  <div className="space-y-2">
+                    <div className="flex justify-between text-sm">
+                      <span className="font-mono">
+                        {token.mint.slice(0, 8)}...
+                      </span>
+                      <span>{token.amount.toFixed(token.decimals)} tokens</span>
                     </div>
                   </div>
-                );
-              })}
+                </div>
+              ))}
             </div>
           ) : (
             <p className="text-sm text-muted-foreground">
-              {bundleWallets.length === 0
+              {wallets.filter(w => !w.archived && w.groupName === 'bundles').length === 0
                 ? "No bundle wallets found. Create a wallet in the bundle group first."
                 : "No token balances found. Click 'Scan Tokens' to check for SPL tokens."}
             </p>
           )}
-        </CardContent>
-      </Card>
+        </div>
 
-      <SwapConfirmationDialog
-        open={swapConfirmation.open}
-        onOpenChange={(open) => setSwapConfirmation(prev => ({ ...prev, open }))}
-        onConfirm={handleSwapConfirm}
-        tokenInfo={swapConfirmation.tokenInfo}
-        isLoading={isLoading}
-      />
-    </>
+        <SwapConfirmationDialog
+          open={confirmDialogOpen}
+          onOpenChange={(open) => setConfirmDialogOpen(open)}
+          onConfirm={handleSwapConfirm}
+          tokenInfo={selectedToken && {
+            amount: selectedToken.amount,
+            decimals: selectedToken.decimals,
+            mint: selectedToken.mint,
+            percentage: selectedPercentage,
+          }}
+          isLoading={isLoading}
+        />
+      </CardContent>
+    </Card>
   );
 }

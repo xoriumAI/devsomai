@@ -1,12 +1,22 @@
 import { NextResponse } from 'next/server';
 import { getWallets, updateWalletBalance } from '@/lib/server-db';
 import { Connection, PublicKey } from '@solana/web3.js';
-
-const connection = new Connection(process.env.NEXT_PUBLIC_RPC_ENDPOINT || 'https://api.mainnet-beta.solana.com');
+import { getSettings } from '@/lib/settings';
 
 export async function POST() {
   try {
     const wallets = await getWallets();
+    
+    // Get current network settings
+    const settings = getSettings();
+    const networkEndpoint = settings.rpc.http;
+    const networkName = settings.network;
+    
+    console.log(`Refreshing wallet balances on ${networkName} at ${networkEndpoint}`);
+    const connection = new Connection(networkEndpoint, {
+      commitment: "confirmed",
+      confirmTransactionInitialTimeout: 60000
+    });
     
     // Update balances in parallel
     await Promise.all(
@@ -22,7 +32,10 @@ export async function POST() {
     
     // Get updated wallets
     const updatedWallets = await getWallets();
-    return NextResponse.json(updatedWallets);
+    return NextResponse.json({
+      wallets: updatedWallets,
+      network: networkName
+    });
   } catch (error) {
     console.error('Error refreshing balances:', error);
     return NextResponse.json(

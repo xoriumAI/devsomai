@@ -6,8 +6,9 @@ import { WalletDashboard } from "@/components/wallet-dashboard";
 import { WalletList } from "@/components/wallet-list";
 import { ChatInterface } from "@/components/chat-interface";
 import { TokenLaunch } from "@/components/token-launch";
+import { SplTokenCreator } from "@/components/spl-token-creator";
 import { CreateWalletDialog } from "@/components/create-wallet-dialog";
-import { LayoutDashboard, Wallet, MessageSquare, Coins } from "lucide-react";
+import { LayoutDashboard, Wallet, MessageSquare, Coins, Sparkles } from "lucide-react";
 import { useWalletStore } from "@/store/wallet-store";
 import { ThemeToggle } from "@/components/theme-toggle";
 import { CreateWalletButton } from "@/components/create-wallet-button";
@@ -45,6 +46,10 @@ export default function Home() {
             <Coins className="mr-2 h-4 w-4" />
             Token Launch
           </TabsTrigger>
+          <TabsTrigger value="spl-token">
+            <Sparkles className="mr-2 h-4 w-4" />
+            SPL Token
+          </TabsTrigger>
           <TabsTrigger value="chat">
             <MessageSquare className="mr-2 h-4 w-4" />
             Chat
@@ -75,6 +80,16 @@ export default function Home() {
         <TabsContent value="token-launch" asChild>
           <div className={activeTab === "token-launch" ? "block" : "hidden"}>
             <TokenLaunch />
+          </div>
+        </TabsContent>
+
+        <TabsContent value="spl-token" asChild>
+          <div className={activeTab === "spl-token" ? "block" : "hidden"}>
+            <div className="space-y-4">
+              <h1 className="text-3xl font-bold">SPL Token Creator</h1>
+              <p className="text-muted-foreground">Create your own SPL token on Solana devnet</p>
+              <SplTokenCreator />
+            </div>
           </div>
         </TabsContent>
 

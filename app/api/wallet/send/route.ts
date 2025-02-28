@@ -2,44 +2,23 @@ import { NextResponse } from 'next/server';
 import { Connection, PublicKey, Transaction, SystemProgram, Keypair, LAMPORTS_PER_SOL, Commitment } from '@solana/web3.js';
 import { getWallet, updateWalletBalance } from '@/lib/server-db';
 import { decrypt } from '@/lib/encryption';
-import { getSettings, FALLBACK_ENDPOINTS } from '@/lib/settings';
+import { getSettings } from '@/lib/settings';
 import bs58 from 'bs58';
 
 const MAX_RETRIES = 3;
 const RETRY_DELAY = 1000;
 
 async function getWorkingConnection(): Promise<Connection> {
+  // Get current network settings
   const settings = getSettings();
-  let lastError: Error | null = null;
-
-  // Try main endpoint first
-  try {
-    const connection = new Connection(settings.rpc.http, {
-      commitment: 'confirmed',
-      confirmTransactionInitialTimeout: 60000,
-    });
-    await connection.getLatestBlockhash('confirmed');
-    return connection;
-  } catch (error) {
-    lastError = error instanceof Error ? error : new Error('Unknown error');
-    console.warn('Main endpoint failed:', lastError.message);
-  }
-
-  // Try fallback endpoints
-  for (const fallback of FALLBACK_ENDPOINTS) {
-    try {
-      const connection = new Connection(fallback.http, {
-        commitment: 'confirmed',
-        confirmTransactionInitialTimeout: 60000,
-      });
-      await connection.getLatestBlockhash('confirmed');
-      return connection;
-    } catch (error) {
-      console.warn(`Fallback endpoint ${fallback.http} failed:`, error);
-    }
-  }
-
-  throw lastError || new Error('All RPC endpoints failed');
+  const networkEndpoint = settings.rpc.http;
+  
+  console.log(`Connecting to ${settings.network} at ${networkEndpoint}`);
+  
+  return new Connection(networkEndpoint, {
+    commitment: "confirmed",
+    confirmTransactionInitialTimeout: 60000
+  });
 }
 
 async function retryOperation<T>(operation: () => Promise<T>, retries = MAX_RETRIES): Promise<T> {
@@ -99,6 +78,30 @@ export async function POST(request: Request) {
       const privateKey = decrypt(senderWallet.encryptedPrivateKey);
       const senderKeypair = Keypair.fromSecretKey(bs58.decode(privateKey));
       
+      // Check sender's balance before proceeding
+      const senderBalance = await connection.getBalance(senderKeypair.publicKey);
+      
+      // Calculate the fee (approximately 5000 lamports)
+      const estimatedFee = 5000;
+      const totalRequired = lamports + estimatedFee;
+      
+      if (senderBalance < totalRequired) {
+        const settings = getSettings();
+        return NextResponse.json(
+          { 
+            error: 'Insufficient balance', 
+            details: {
+              available: senderBalance / LAMPORTS_PER_SOL,
+              required: amount,
+              fee: estimatedFee / LAMPORTS_PER_SOL,
+              total: totalRequired / LAMPORTS_PER_SOL,
+              network: settings.network
+            }
+          },
+          { status: 400 }
+        );
+      }
+      
       // Validate recipient address
       const recipientPubkey = new PublicKey(toPublicKey);
       
@@ -139,8 +142,8 @@ export async function POST(request: Request) {
         });
 
         // Update balances
-        const senderBalance = await connection.getBalance(senderKeypair.publicKey);
-        await updateWalletBalance(fromPublicKey, senderBalance / LAMPORTS_PER_SOL);
+        const updatedSenderBalance = await connection.getBalance(senderKeypair.publicKey);
+        await updateWalletBalance(fromPublicKey, updatedSenderBalance / LAMPORTS_PER_SOL);
 
         const recipientWallet = await getWallet(toPublicKey);
         if (recipientWallet) {
@@ -162,8 +165,33 @@ export async function POST(request: Request) {
       }
     } catch (error) {
       console.error('Transaction error:', error);
+      
+      // Extract more detailed error information if available
+      let errorMessage = 'Transaction failed';
+      let errorDetails = null;
+      
+      if (error instanceof Error) {
+        errorMessage = error.message;
+        
+        // Check for SendTransactionError with logs
+        if ('transactionLogs' in error && Array.isArray(error.transactionLogs)) {
+          errorDetails = {
+            logs: error.transactionLogs,
+            message: ('transactionMessage' in error ? (error as any).transactionMessage : errorMessage)
+          };
+          
+          // Check for insufficient funds in logs
+          if (error.transactionLogs.some(log => log.includes('insufficient lamports'))) {
+            errorMessage = 'Insufficient balance for this transaction';
+          }
+        }
+      }
+      
       return NextResponse.json(
-        { error: error instanceof Error ? error.message : 'Transaction failed' },
+        { 
+          error: errorMessage,
+          details: errorDetails
+        },
         { status: 500 }
       );
     }
