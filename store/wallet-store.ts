@@ -3,7 +3,6 @@ import { WalletGroup } from '@/lib/wallet';
 import { Connection, PublicKey, Commitment } from '@solana/web3.js';
 import { getSettings, loadSettings, getRateLimiter, switchNetwork as switchNetworkSetting } from '@/lib/settings';
 import { Wallet, WalletSection, getUserSubscription } from '@/lib/supabase-db';
-import { supabase } from '@/lib/supabase';
 
 export interface WalletStore {
   wallets: Wallet[];

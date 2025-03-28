@@ -1,5 +1,7 @@
-// Mock supabase client for TypeScript compatibility
-// This is a placeholder to make the build succeed
+/**
+ * Mock client-side Supabase client configuration
+ * This file provides mock Supabase clients for the build to succeed
+ */
 
 // Mock client type
 type SupabaseClient = {
@@ -14,8 +16,10 @@ type SupabaseClient = {
   }
 };
 
-// Create a mock supabase client
-const createMockClient = (): SupabaseClient => {
+/**
+ * Create a mock client that satisfies TypeScript interfaces but doesn't use actual Supabase SDK
+ */
+function createMockClient(): SupabaseClient {
   return {
     auth: {
       getSession: async () => ({ data: { session: null }, error: null }),
@@ -27,16 +31,35 @@ const createMockClient = (): SupabaseClient => {
       onAuthStateChange: () => ({ data: { subscription: null } })
     }
   };
-};
+}
 
-// Export a mock factory function
-export function getSupabaseClient() {
+// Create a singleton for the browser client
+let browserClient: SupabaseClient | null = null;
+
+/**
+ * Get a Supabase client for use in browser components
+ * Uses a mock implementation for the Docker build
+ */
+export function getSupabaseBrowser() {
+  if (browserClient) return browserClient;
+  
+  // Create the mock client
+  browserClient = createMockClient();
+  
+  return browserClient;
+}
+
+/**
+ * Get a Supabase admin client with the service role
+ * This returns a mock implementation for the Docker build
+ */
+export function getSupabaseAdmin() {
   return createMockClient();
 }
 
-// Export a mock client instance
-export const supabase = createMockClient();
+// Default client export for backward compatibility
+export const supabase = getSupabaseBrowser();
 
 // Export types
-export type User = any;
-export type Session = any;
+export type User = any; 
+export type Session = any; 
