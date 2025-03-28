@@ -1,9 +1,6 @@
-import { getSupabaseClient } from './supabase';
+import { supabase } from './supabase';
 import { generateKeyPair } from './crypto';
 import { encrypt, decrypt } from './encryption';
-
-// Get the supabase client
-const supabase = getSupabaseClient();
 
 // Try to pre-load environment variables if we're in development
 (function loadEnv() {
