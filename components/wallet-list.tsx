@@ -38,7 +38,8 @@ interface ClientWallet {
 }
 
 export function WalletList() {
-  const { wallets, isLoading, refreshBalances, getPrivateKey, toggleArchive, loadWallets, stopAutoRefresh, userId } = useWalletStore();
+  const { wallets, isLoading, refreshBalances, getPrivateKey, toggleArchive, loadWallets, stopAutoRefresh } = useWalletStore();
+  const userId = useWalletStore(state => state.userId);
   const [selectedWallet, setSelectedWallet] = useState<string | null>(null);
   const [showPrivateKey, setShowPrivateKey] = useState(false);
   const [privateKey, setPrivateKey] = useState<string | null>(null);
