@@ -93,12 +93,7 @@ export function WalletGroup({ groupName, title }: { groupName: string; title: st
                 continue;
               }
 
-              await addWallet({
-                publicKey,
-                privateKey,
-                name: `Imported ${publicKey.slice(0, 4)}...`,
-                groupName,
-              });
+              await addWallet(privateKey, publicKey, `Imported ${publicKey.slice(0, 4)}...`);
               
               importedCount++;
             } catch (error) {
