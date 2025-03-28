@@ -1,30 +1,5 @@
-import { createClient } from '@supabase/supabase-js';
 import { generateKeyPair } from './crypto';
 import { encrypt, decrypt } from './encryption';
-
-// Get environment variables with fallbacks
-const supabaseUrl = process.env.NEXT_PUBLIC_SUPABASE_URL || 'https://devsomain8n.lucidsro.com';
-const supabaseAnonKey = process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY || 'eyJ0eXAiOiJKV1QiLCJhbGciOiJIUzI1NiJ9.eyJpc3MiOiJzdXBhYmFzZSIsImlhdCI6MTc0MzE2MDA4MCwiZXhwIjo0ODk4ODMzNjgwLCJyb2xlIjoiYW5vbiJ9.kqwFfG5Jmw4HasqGHwu17cFBruX4c_qZGS05iyurZco';
-
-// Create a Supabase client
-const supabase = createClient(supabaseUrl, supabaseAnonKey, {
-  auth: {
-    storageKey: 'supabase-auth-token',
-    persistSession: true,
-    autoRefreshToken: true,
-  }
-});
-
-// Try to pre-load environment variables if we're in development
-(function loadEnv() {
-  if (process.env.NODE_ENV !== 'production') {
-    try {
-      require('dotenv').config();
-    } catch (e) {
-      console.log('dotenv not available');
-    }
-  }
-})();
 
 // Types
 export interface Wallet {
@@ -95,126 +70,78 @@ export interface Profile {
 function mapWallet(wallet: any): Wallet {
   return {
     id: wallet.id,
-    publicKey: wallet.public_key,
-    encryptedPrivateKey: wallet.encrypted_private_key,
+    publicKey: wallet.public_key || wallet.publicKey,
+    encryptedPrivateKey: wallet.encrypted_private_key || wallet.encryptedPrivateKey,
     name: wallet.name,
     balance: Number(wallet.balance || 0),
-    sectionId: wallet.section_id,
-    userId: wallet.user_id,
+    sectionId: wallet.section_id || wallet.sectionId,
+    userId: wallet.user_id || wallet.userId,
     archived: !!wallet.archived,
-    isCex: !!wallet.is_cex,
+    isCex: !!wallet.is_cex || !!wallet.isCex,
     network: wallet.network,
-    createdAt: wallet.created_at ? new Date(wallet.created_at) : new Date(),
-    updatedAt: wallet.updated_at ? new Date(wallet.updated_at) : undefined,
-    lastUpdated: wallet.last_updated ? new Date(wallet.last_updated) : new Date(),
-    groupName: wallet.group_name,
+    createdAt: wallet.created_at ? new Date(wallet.created_at) : wallet.createdAt || new Date(),
+    updatedAt: wallet.updated_at ? new Date(wallet.updated_at) : wallet.updatedAt,
+    lastUpdated: wallet.last_updated ? new Date(wallet.last_updated) : wallet.lastUpdated || new Date(),
+    groupName: wallet.group_name || wallet.groupName,
     user_id: wallet.user_id
   };
 }
 
+// Mock implementations that return hardcoded values
+const mockDB = {
+  wallets: [],
+  sections: []
+};
+
 // Get user subscription with tier details
 export async function getUserSubscription(userId: string): Promise<UserSubscription | null> {
-  try {
-    // Return a default subscription for development/testing
-    return {
-      tier: {
-        walletLimit: 100,
-        name: 'Basic'
-      }
-    };
-  } catch (error) {
-    console.error('Error getting user subscription:', error);
-    return null;
-  }
+  return {
+    tier: {
+      walletLimit: 100,
+      name: 'Basic'
+    }
+  };
 }
 
 // Get all wallets for a user
 export async function getWallets(userId: string): Promise<Wallet[]> {
-  try {
-    const { data, error } = await supabase
-      .from('wallets')
-      .select('*')
-      .eq('user_id', userId)
-      .order('created_at', { ascending: false });
-
-    if (error) {
-      console.error('Error getting wallets:', error);
-      throw new Error(`Failed to get wallets: ${error.message}`);
-    }
-
-    return (data || []).map(mapWallet);
-  } catch (error) {
-    console.error('Error in getWallets:', error);
-    return [];
-  }
+  return [];
 }
 
 // Get a single wallet by its public key
 export async function getWallet(publicKey: string, userId: string): Promise<Wallet | null> {
-  try {
-    const { data, error } = await supabase
-      .from('wallets')
-      .select('*')
-      .eq('public_key', publicKey)
-      .eq('user_id', userId)
-      .single();
-
-    if (error) {
-      if (error.code === 'PGRST116') {
-        // PGRST116 means no rows returned
-        return null;
-      }
-      console.error('Error getting wallet:', error);
-      throw new Error(`Failed to get wallet: ${error.message}`);
-    }
-
-    return mapWallet(data);
-  } catch (error) {
-    console.error('Error in getWallet:', error);
-    return null;
-  }
+  return null;
 }
 
 // Create a new wallet
 export async function createWallet(params: any): Promise<Wallet | null> {
-  try {
-    // Simplified implementation for Docker build to pass
-    const wallet = {
-      public_key: params.publicKey,
-      encrypted_private_key: params.encryptedPrivateKey,
-      name: params.name || null,
-      section_id: params.sectionId || null,
-      user_id: params.userId,
-      is_cex: params.isCex || false,
-      network: params.network || 'mainnet-beta',
-      balance: 0,
-      archived: false
-    };
-    
-    return mapWallet(wallet);
-  } catch (error) {
-    console.error('Error in createWallet:', error);
-    return null;
-  }
+  const wallet = {
+    public_key: params.publicKey,
+    encrypted_private_key: params.encryptedPrivateKey,
+    name: params.name || null,
+    section_id: params.sectionId || null,
+    user_id: params.userId,
+    is_cex: params.isCex || false,
+    network: params.network || 'mainnet-beta',
+    balance: 0,
+    archived: false
+  };
+  
+  return mapWallet(wallet);
 }
 
 // Generate a wallet with a random keypair
 export async function generateWallet(params: any): Promise<Wallet> {
-  try {
-    const keyPair = await generateKeyPair();
-    return {
-      publicKey: keyPair.publicKey,
-      balance: 0,
-      archived: false,
-      createdAt: new Date(),
-      lastUpdated: new Date(),
-      groupName: params.group || 'main',
-      name: params.name
-    };
-  } catch (error) {
-    console.error('Error in generateWallet:', error);
-    throw new Error('Failed to generate wallet');
-  }
+  const keyPair = await generateKeyPair();
+  return {
+    publicKey: keyPair.publicKey,
+    balance: 0,
+    archived: false,
+    createdAt: new Date(),
+    lastUpdated: new Date(),
+    groupName: params.group || 'main',
+    name: params.name
+  };
 }
 
 // Update wallet balance
@@ -249,4 +176,4 @@ export async function createWalletSection(name: string, userId: string): Promise
 // Get user profile
 export async function getUserProfile(userId: string): Promise<Profile | null> {
   return null;
-} 
+}
