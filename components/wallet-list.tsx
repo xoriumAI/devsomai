@@ -6,7 +6,7 @@ import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogDescription, DialogFooter } from "@/components/ui/dialog";
 import { Search, Filter, RefreshCw, Eye, EyeOff, Copy, Check, Archive, ArchiveRestore, Plus, Wallet, Send, Trash2, Edit, Save, MoreVertical } from "lucide-react";
-import { useWalletStore } from "@/store/wallet-store";
+import { useWalletStore, WalletStore } from "@/store/wallet-store";
 import { validatePrivateKey, WALLET_GROUPS, WalletGroup } from "@/lib/wallet";
 import { useToast } from "@/hooks/use-toast";
 import { CreateWalletDialog } from "./create-wallet-dialog";
@@ -38,8 +38,7 @@ interface ClientWallet {
 }
 
 export function WalletList() {
-  const { wallets, isLoading, refreshBalances, getPrivateKey, toggleArchive, loadWallets, stopAutoRefresh } = useWalletStore();
-  const userId = useWalletStore(state => state.userId);
+  const { wallets, isLoading, refreshBalances, getPrivateKey, toggleArchive, loadWallets, stopAutoRefresh, userId } = useWalletStore() as WalletStore;
   const [selectedWallet, setSelectedWallet] = useState<string | null>(null);
   const [showPrivateKey, setShowPrivateKey] = useState(false);
   const [privateKey, setPrivateKey] = useState<string | null>(null);

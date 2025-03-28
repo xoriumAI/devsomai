@@ -2,39 +2,47 @@ import { create } from 'zustand';
 import { WalletGroup } from '@/lib/wallet';
 import { Connection, PublicKey, Commitment } from '@solana/web3.js';
 import { getSettings, loadSettings, getRateLimiter, switchNetwork as switchNetworkSetting } from '@/lib/settings';
+import { Wallet, WalletSection, getUserSubscription } from '@/lib/supabase-db';
+import { supabase } from '@/lib/supabase';
 
-interface Wallet {
-  publicKey: string;
-  encryptedPrivateKey: string;
-  name: string;
-  balance: number;
-  createdAt: Date;
-  lastUpdated: Date;
-  archived: boolean;
-  groupName: string;
-}
-
-interface WalletStore {
+export interface WalletStore {
   wallets: Wallet[];
+  sections: WalletSection[];
   isLoading: boolean;
   error: string | null;
   connection: Connection | null;
   isConnected: boolean;
   network: 'mainnet-beta' | 'devnet';
+  userId: string | null;
+  walletLimit: number | null;
+  
+  // Core functions
+  setUserId: (userId: string | null) => void;
   startAutoRefresh: () => void;
   stopAutoRefresh: () => void;
-  createWallet: (name?: string, group?: WalletGroup) => Promise<void>;
-  importWallet: (privateKey: string, name?: string, group?: WalletGroup) => Promise<void>;
+  switchNetwork: (network: 'mainnet-beta' | 'devnet') => void;
+  
+  // Wallet operations
+  createWallet: (name?: string, section?: string) => Promise<void>;
+  importWallet: (privateKey: string, name?: string, section?: string) => Promise<void>;
   addCEXWallet: (publicKey: string, name?: string) => Promise<void>;
   loadWallets: () => Promise<void>;
   refreshBalances: () => Promise<void>;
   getPrivateKey: (publicKey: string) => Promise<string | null>;
   toggleArchive: (publicKey: string) => Promise<void>;
+  deleteWallet: (publicKey: string) => Promise<void>;
+  updateWalletBalance: (publicKey: string, balance: number) => void;
+  
+  // Section operations
+  loadSections: () => Promise<void>;
+  createSection: (name: string) => Promise<void>;
+  
+  // Utility functions
   getTotalBalance: (archived?: boolean) => number;
   sendSOL: (fromPublicKey: string, toPublicKey: string, amount: number) => Promise<void>;
-  updateWalletBalance: (publicKey: string, balance: number) => void;
-  addWallet: (wallet: { publicKey: string; privateKey: string; name: string; groupName: string; }) => Promise<void>;
-  switchNetwork: (network: 'mainnet-beta' | 'devnet') => void;
+  
+  // Additional properties
+  addWallet: (privateKey: string, publicKey: string, name?: string) => Promise<void>;
 }
 
 let autoRefreshInterval: NodeJS.Timeout | null = null;
@@ -43,17 +51,38 @@ let wsSubscriptions: { [key: string]: number } = {};
 
 export const useWalletStore = create<WalletStore>((set, get) => ({
   wallets: [],
+  sections: [],
   isLoading: false,
   error: null,
   connection: null,
   isConnected: false,
   network: getSettings().network,
+  userId: null,
+  walletLimit: null,
+
+  setUserId: (userId: string | null) => {
+    set({ userId });
+    if (userId) {
+      get().loadWallets();
+      get().loadSections();
+      // Get subscription details to set wallet limit
+      getUserSubscription(userId).then(subscription => {
+        if (subscription?.tier?.walletLimit) {
+          set({ walletLimit: subscription.tier.walletLimit });
+        }
+      }).catch(err => {
+        console.error('Error loading subscription:', err);
+      });
+    } else {
+      set({ wallets: [], sections: [] });
+    }
+  },
 
   updateWalletBalance: (publicKey: string, balance: number) => {
     const { wallets } = get();
     const updatedWallets = wallets.map(w => 
       w.publicKey === publicKey 
-        ? { ...w, balance, lastUpdated: new Date() }
+        ? { ...w, balance, updatedAt: new Date() }
         : w
     );
     set({ wallets: updatedWallets });
@@ -81,43 +110,32 @@ export const useWalletStore = create<WalletStore>((set, get) => ({
 
       // Subscribe to account changes for all wallets
       const { wallets, updateWalletBalance } = get();
+      
       wallets.forEach(wallet => {
         try {
-          if (!rpcConnection) return;
-          
-          // Skip WebSocket subscription for CEX wallets
-          if (wallet.groupName === 'cex') return;
-          
-          // Only create subscription if it doesn't exist
-          if (!wsSubscriptions[wallet.publicKey]) {
-            try {
-              const pubkey = new PublicKey(wallet.publicKey);
-              const subscriptionId = rpcConnection.onAccountChange(
-                pubkey,
-                (accountInfo) => {
-                  const balanceInSOL = accountInfo.lamports / 1e9;
-                  console.log(`Balance update received for ${wallet.publicKey}: ${balanceInSOL} SOL`);
-                  updateWalletBalance(wallet.publicKey, balanceInSOL);
-                },
-                'confirmed'
-              );
-              
-              wsSubscriptions[wallet.publicKey] = subscriptionId;
-              console.log(`Subscribed to updates for ${wallet.publicKey}`);
-            } catch (error) {
-              console.error('Invalid Solana address for WebSocket subscription:', wallet.publicKey);
-            }
-          }
+          const pubkey = new PublicKey(wallet.publicKey);
+          const subscriptionId = rpcConnection!.onAccountChange(
+            pubkey,
+            (account) => {
+              const balance = account.lamports / 1e9; // Convert from lamports to SOL
+              updateWalletBalance(wallet.publicKey, balance);
+            },
+            'confirmed'
+          );
+          wsSubscriptions[wallet.publicKey] = subscriptionId;
         } catch (error) {
-          console.error('Error subscribing to wallet:', wallet.publicKey, error);
+          console.error(`Error subscribing to ${wallet.publicKey}:`, error);
         }
       });
 
-      // Initial balance fetch
-      get().refreshBalances();
+      // Still do periodic refresh as a backup
+      autoRefreshInterval = setInterval(() => {
+        get().refreshBalances();
+      }, settings.refreshInterval);
+
     } catch (error) {
-      console.error('Error setting up connections:', error);
-      set({ isConnected: false });
+      console.error("Error setting up auto-refresh:", error);
+      set({ error: 'Failed to connect to Solana network' });
     }
   },
 
@@ -146,7 +164,12 @@ export const useWalletStore = create<WalletStore>((set, get) => ({
     set({ connection: null, isConnected: false });
   },
 
-  createWallet: async (name?: string, group: WalletGroup = 'main') => {
+  createWallet: async (name?: string, section?: string) => {
+    const { userId } = get();
+    if (!userId) {
+      throw new Error('User not authenticated');
+    }
+    
     try {
       set({ isLoading: true, error: null });
       
@@ -157,7 +180,7 @@ export const useWalletStore = create<WalletStore>((set, get) => ({
         },
         body: JSON.stringify({
           name,
-          group,
+          section,
         }),
       });
 
@@ -176,7 +199,12 @@ export const useWalletStore = create<WalletStore>((set, get) => ({
     }
   },
 
-  importWallet: async (privateKey: string, name?: string, group: WalletGroup = 'main') => {
+  importWallet: async (privateKey: string, name?: string, section?: string) => {
+    const { userId } = get();
+    if (!userId) {
+      throw new Error('User not authenticated');
+    }
+    
     set({ isLoading: true });
     try {
       const response = await fetch('/api/wallet/import', {
@@ -184,7 +212,7 @@ export const useWalletStore = create<WalletStore>((set, get) => ({
         headers: {
           'Content-Type': 'application/json',
         },
-        body: JSON.stringify({ privateKey, name, group }),
+        body: JSON.stringify({ privateKey, name, section }),
       });
 
       if (!response.ok) {
@@ -202,6 +230,11 @@ export const useWalletStore = create<WalletStore>((set, get) => ({
   },
 
   addCEXWallet: async (publicKey: string, name?: string) => {
+    const { userId } = get();
+    if (!userId) {
+      throw new Error('User not authenticated');
+    }
+    
     try {
       set({ isLoading: true, error: null });
       
@@ -232,20 +265,33 @@ export const useWalletStore = create<WalletStore>((set, get) => ({
   },
 
   loadWallets: async () => {
+    const { userId } = get();
+    if (!userId) {
+      return; // Not authenticated, don't attempt to load
+    }
+    
     try {
       set({ isLoading: true, error: null });
+      console.log(`Fetching wallets for user ${userId}...`);
+      
       const response = await fetch('/api/wallet');
       if (!response.ok) {
         throw new Error(`Failed to load wallets: ${response.statusText}`);
       }
+      
       const data = await response.json();
-      // Convert date strings to Date objects
-      const wallets = data.map((wallet: any) => ({
-        ...wallet,
-        createdAt: new Date(wallet.createdAt),
-        lastUpdated: new Date(wallet.lastUpdated),
-      }));
-      set({ wallets });
+      console.log(`Retrieved ${data.length} wallets from API`);
+      
+      // Log wallet groups to help with debugging
+      const groups = data.reduce((acc: Record<string, number>, wallet: any) => {
+        const group = wallet.groupName || 'unknown';
+        acc[group] = (acc[group] || 0) + 1;
+        return acc;
+      }, {});
+      
+      console.log('Wallet groups:', groups);
+      
+      set({ wallets: data });
 
       // Start auto-refresh after loading wallets
       get().startAutoRefresh();
@@ -258,60 +304,37 @@ export const useWalletStore = create<WalletStore>((set, get) => ({
   },
 
   refreshBalances: async () => {
+    const { userId } = get();
+    if (!userId || !get().isConnected) {
+      return;
+    }
+    
     try {
-      set({ isLoading: true, error: null });
-      const { wallets, updateWalletBalance } = get();
-      if (!wallets.length) return;
-
-      // Get rate limiter
-      const limiter = getRateLimiter();
+      console.log(`Refreshing wallet balances for user ${userId}...`);
       
-      // Process wallets in smaller batches
-      const BATCH_SIZE = 3;
-      for (let i = 0; i < wallets.length; i += BATCH_SIZE) {
-        const batch = wallets.slice(i, i + BATCH_SIZE);
-        
-        // Process each batch in parallel, but with rate limiting
-        await Promise.all(
-          batch.map(async (wallet) => {
-            // Skip balance check for CEX wallets as they need manual updates
-            if (wallet.groupName === 'cex') return;
-
-            while (!(await limiter.acquirePermit())) {
-              await new Promise(resolve => setTimeout(resolve, 1000));
-            }
-            
-            try {
-              if (!rpcConnection) throw new Error('No RPC connection available');
-              try {
-                const pubkey = new PublicKey(wallet.publicKey);
-                const balance = await rpcConnection.getBalance(pubkey);
-                updateWalletBalance(wallet.publicKey, balance / 1e9);
-              } catch (error) {
-                console.error(`Invalid Solana address for balance check: ${wallet.publicKey}`);
-              }
-            } catch (error) {
-              console.error(`Error fetching balance for ${wallet.publicKey}:`, error);
-            } finally {
-              limiter.releasePermit();
-            }
-          })
-        );
-        
-        // Add a small delay between batches
-        if (i + BATCH_SIZE < wallets.length) {
-          await new Promise(resolve => setTimeout(resolve, 1000));
-        }
+      const response = await fetch('/api/wallet/refresh', {
+        method: 'POST',
+      });
+      
+      if (!response.ok) {
+        throw new Error(`Failed to refresh balances: ${response.statusText}`);
       }
+      
+      const data = await response.json();
+      console.log(`Retrieved ${data.wallets?.length || 0} updated wallets`);
+      
+      set({ wallets: data.wallets });
     } catch (error) {
-      console.error('Error in auto-refresh:', error);
-      set({ error: error instanceof Error ? error.message : 'Failed to refresh balances' });
-    } finally {
-      set({ isLoading: false });
+      console.error('Error refreshing balances:', error);
     }
   },
 
   getPrivateKey: async (publicKey: string) => {
+    const { userId } = get();
+    if (!userId) {
+      throw new Error('User not authenticated');
+    }
+    
     try {
       const response = await fetch(`/api/wallet/${publicKey}/private-key`);
       
@@ -328,6 +351,11 @@ export const useWalletStore = create<WalletStore>((set, get) => ({
   },
 
   toggleArchive: async (publicKey: string) => {
+    const { userId } = get();
+    if (!userId) {
+      throw new Error('User not authenticated');
+    }
+    
     try {
       set({ isLoading: true, error: null });
       const response = await fetch(`/api/wallet/${publicKey}/archive`, {
@@ -347,6 +375,82 @@ export const useWalletStore = create<WalletStore>((set, get) => ({
     }
   },
 
+  deleteWallet: async (publicKey: string) => {
+    const { userId } = get();
+    if (!userId) {
+      throw new Error('User not authenticated');
+    }
+    
+    try {
+      set({ isLoading: true, error: null });
+      const response = await fetch(`/api/wallet/${publicKey}`, {
+        method: 'DELETE',
+      });
+      
+      if (!response.ok) {
+        throw new Error(`Failed to delete wallet: ${response.statusText}`);
+      }
+      
+      await get().loadWallets();
+    } catch (error) {
+      console.error('Error deleting wallet:', error);
+      set({ error: error instanceof Error ? error.message : 'Failed to delete wallet' });
+    } finally {
+      set({ isLoading: false });
+    }
+  },
+
+  loadSections: async () => {
+    const { userId } = get();
+    if (!userId) {
+      return;
+    }
+    
+    try {
+      set({ isLoading: true, error: null });
+      const response = await fetch('/api/sections');
+      if (!response.ok) {
+        throw new Error(`Failed to load sections: ${response.statusText}`);
+      }
+      const data = await response.json();
+      set({ sections: data });
+    } catch (error) {
+      console.error('Error loading sections:', error);
+      set({ error: error instanceof Error ? error.message : 'Failed to load sections' });
+    } finally {
+      set({ isLoading: false });
+    }
+  },
+
+  createSection: async (name: string) => {
+    const { userId } = get();
+    if (!userId) {
+      throw new Error('User not authenticated');
+    }
+    
+    try {
+      set({ isLoading: true, error: null });
+      const response = await fetch('/api/sections', {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+        },
+        body: JSON.stringify({ name }),
+      });
+      
+      if (!response.ok) {
+        throw new Error(`Failed to create section: ${response.statusText}`);
+      }
+      
+      await get().loadSections();
+    } catch (error) {
+      console.error('Error creating section:', error);
+      set({ error: error instanceof Error ? error.message : 'Failed to create section' });
+    } finally {
+      set({ isLoading: false });
+    }
+  },
+
   getTotalBalance: (archived?: boolean) => {
     const wallets = get().wallets;
     return wallets
@@ -355,6 +459,11 @@ export const useWalletStore = create<WalletStore>((set, get) => ({
   },
 
   sendSOL: async (fromPublicKey: string, toPublicKey: string, amount: number) => {
+    const { userId } = get();
+    if (!userId) {
+      throw new Error('User not authenticated');
+    }
+    
     try {
       set({ isLoading: true, error: null });
       const response = await fetch('/api/wallet/send', {
@@ -384,16 +493,31 @@ export const useWalletStore = create<WalletStore>((set, get) => ({
     }
   },
 
-  addWallet: async (wallet: { publicKey: string; privateKey: string; name: string; groupName: string; }) => {
+  switchNetwork: (network) => {
+    switchNetworkSetting(network);
+    set({ network });
+    get().stopAutoRefresh(); // Stop refreshing on the current network
+    get().loadWallets();     // Reload wallets for the new network
+  },
+
+  addWallet: async (privateKey: string, publicKey: string, name?: string) => {
+    const { userId } = get();
+    if (!userId) {
+      throw new Error('User not authenticated');
+    }
+    
     try {
       set({ isLoading: true, error: null });
-      
-      const response = await fetch('/api/wallet', {
+      const response = await fetch('/api/wallet/add', {
         method: 'POST',
         headers: {
           'Content-Type': 'application/json',
         },
-        body: JSON.stringify(wallet),
+        body: JSON.stringify({
+          privateKey,
+          publicKey,
+          name,
+        }),
       });
 
       if (!response.ok) {
@@ -404,49 +528,10 @@ export const useWalletStore = create<WalletStore>((set, get) => ({
       await get().loadWallets();
     } catch (error) {
       console.error('Failed to add wallet:', error);
-      set({ error: 'Failed to add wallet' });
+      set({ error: error instanceof Error ? error.message : 'Failed to add wallet' });
       throw error;
     } finally {
       set({ isLoading: false });
     }
-  },
-
-  switchNetwork: (network: 'mainnet-beta' | 'devnet') => {
-    // Stop auto-refresh to disconnect current connections
-    get().stopAutoRefresh();
-    
-    // Check if this is a user preference
-    const isUserPreference = typeof window !== 'undefined' && 
-      localStorage.getItem('user-network-preference') === network;
-    
-    // Make a server-side API call to switch network
-    fetch('/api/settings/network', {
-      method: 'POST',
-      headers: {
-        'Content-Type': 'application/json',
-      },
-      body: JSON.stringify({ network, isUserPreference }),
-    })
-    .then(response => {
-      if (!response.ok) {
-        throw new Error('Failed to switch network on server');
-      }
-      return response.json();
-    })
-    .then(() => {
-      console.log(`Network switched to ${network} on server (User preference: ${isUserPreference})`);
-    })
-    .catch(error => {
-      console.error('Error switching network on server:', error);
-    });
-    
-    // Update store state
-    set({ network });
-    
-    // Restart auto-refresh with new network settings
-    get().startAutoRefresh();
-    
-    // Refresh balances with new network
-    get().refreshBalances();
-  },
+  }
 }));
