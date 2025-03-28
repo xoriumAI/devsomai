@@ -4,8 +4,8 @@ import { useState, useEffect } from "react";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
-import { Dialog, DialogContent, DialogHeader, DialogTitle } from "@/components/ui/dialog";
-import { Search, Filter, RefreshCw, Eye, EyeOff, Copy, Check, Archive, ArchiveRestore, Plus, Wallet, Send } from "lucide-react";
+import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogDescription, DialogFooter } from "@/components/ui/dialog";
+import { Search, Filter, RefreshCw, Eye, EyeOff, Copy, Check, Archive, ArchiveRestore, Plus, Wallet, Send, Trash2, Edit, Save, MoreVertical } from "lucide-react";
 import { useWalletStore } from "@/store/wallet-store";
 import { validatePrivateKey, WALLET_GROUPS, WalletGroup } from "@/lib/wallet";
 import { useToast } from "@/hooks/use-toast";
@@ -17,9 +17,28 @@ import { SendSolDialog } from "./send-sol-dialog";
 import { swapTokenPercentage } from "./bundle-token-swap";
 import { AirdropButton } from "./airdrop-button";
 import { SplTokenChecker } from "./spl-token-checker";
+import {
+  DropdownMenu,
+  DropdownMenuContent,
+  DropdownMenuItem,
+  DropdownMenuTrigger,
+} from "@/components/ui/dropdown-menu";
+
+// Define client wallet type to match what the API returns
+interface ClientWallet {
+  publicKey: string;
+  encryptedPrivateKey: string;
+  name: string;
+  balance: number;
+  lastUpdated: Date | string;
+  createdAt: Date | string;
+  archived: boolean;
+  groupName: string;
+  isCex?: boolean;
+}
 
 export function WalletList() {
-  const { wallets, isLoading, refreshBalances, getPrivateKey, toggleArchive, loadWallets, stopAutoRefresh } = useWalletStore();
+  const { wallets, isLoading, refreshBalances, getPrivateKey, toggleArchive, deleteWallet, loadWallets, stopAutoRefresh, userId } = useWalletStore();
   const [selectedWallet, setSelectedWallet] = useState<string | null>(null);
   const [showPrivateKey, setShowPrivateKey] = useState(false);
   const [privateKey, setPrivateKey] = useState<string | null>(null);
@@ -28,7 +47,79 @@ export function WalletList() {
   const [showArchived, setShowArchived] = useState(false);
   const [createWalletGroup, setCreateWalletGroup] = useState<WalletGroup | null>(null);
   const [activeGroup, setActiveGroup] = useState<WalletGroup>('main');
+  const [walletToDelete, setWalletToDelete] = useState<string | null>(null);
+  const [groupRenameOpen, setGroupRenameOpen] = useState<boolean>(false);
+  const [groupToRename, setGroupToRename] = useState<WalletGroup | null>(null);
+  const [newGroupName, setNewGroupName] = useState<string>('');
+  const [customGroupNames, setCustomGroupNames] = useState<Record<string, string>>({});
+  const [groupToDelete, setGroupToDelete] = useState<WalletGroup | null>(null);
+  const [deleteGroupDialogOpen, setDeleteGroupDialogOpen] = useState<boolean>(false);
+  const [deletedGroups, setDeletedGroups] = useState<string[]>([]);
   const { toast } = useToast();
+
+  // Helper to get the user-specific storage key
+  const getGroupNamesStorageKey = (): string => {
+    return userId ? `wallet-group-names-${userId}` : 'wallet-group-names';
+  };
+
+  // Helper to get the user-specific deleted groups storage key
+  const getDeletedGroupsStorageKey = (): string => {
+    return userId ? `deleted-wallet-groups-${userId}` : 'deleted-wallet-groups';
+  };
+
+  // Load custom group names from localStorage with user-specific key
+  useEffect(() => {
+    if (!userId) return; // Only load if we have a user ID
+    
+    const storageKey = getGroupNamesStorageKey();
+    console.log(`Loading wallet group names for user: ${userId} with key: ${storageKey}`);
+    
+    const savedCustomNames = localStorage.getItem(storageKey);
+    if (savedCustomNames) {
+      try {
+        setCustomGroupNames(JSON.parse(savedCustomNames));
+      } catch (error) {
+        console.error('Error loading custom group names:', error);
+      }
+    } else {
+      // Clear existing names if no saved preferences for this user
+      setCustomGroupNames({});
+    }
+
+    // Load deleted groups
+    const deletedGroupsKey = getDeletedGroupsStorageKey();
+    const savedDeletedGroups = localStorage.getItem(deletedGroupsKey);
+    if (savedDeletedGroups) {
+      try {
+        setDeletedGroups(JSON.parse(savedDeletedGroups));
+        console.log(`Loaded deleted groups for user: ${userId}:`, JSON.parse(savedDeletedGroups));
+      } catch (error) {
+        console.error('Error loading deleted groups:', error);
+      }
+    } else {
+      setDeletedGroups([]);
+    }
+  }, [userId]);
+
+  // Save custom group names to localStorage with user-specific key
+  useEffect(() => {
+    if (!userId || Object.keys(customGroupNames).length === 0) return;
+    
+    const storageKey = getGroupNamesStorageKey();
+    console.log(`Saving wallet group names for user: ${userId} with key: ${storageKey}`);
+    
+    localStorage.setItem(storageKey, JSON.stringify(customGroupNames));
+  }, [customGroupNames, userId]);
+
+  // Save deleted groups to localStorage
+  useEffect(() => {
+    if (!userId || deletedGroups.length === 0) return;
+    
+    const storageKey = getDeletedGroupsStorageKey();
+    console.log(`Saving deleted groups for user: ${userId} with key: ${storageKey}`, deletedGroups);
+    
+    localStorage.setItem(storageKey, JSON.stringify(deletedGroups));
+  }, [deletedGroups, userId]);
 
   useEffect(() => {
     console.log('Loading wallets...');
@@ -93,8 +184,136 @@ export function WalletList() {
     }
   };
 
-  const filteredWallets = wallets.filter(wallet => {
-    const matchesSearch = wallet.name.toLowerCase().includes(searchTerm.toLowerCase()) ||
+  const handleDeleteWallet = async (publicKey: string) => {
+    try {
+      await deleteWallet(publicKey);
+      toast({
+        title: "Success",
+        description: "Wallet has been permanently deleted",
+      });
+    } catch (error) {
+      console.error('Error deleting wallet:', error);
+      toast({
+        title: "Error",
+        description: error instanceof Error ? error.message : "Failed to delete wallet",
+        variant: "destructive",
+      });
+    }
+  };
+
+  const handleRenameClick = (groupId: WalletGroup) => {
+    setGroupToRename(groupId);
+    const originalGroup = WALLET_GROUPS.find(g => g.id === groupId);
+    const currentName = customGroupNames[groupId] || originalGroup?.name || '';
+    setNewGroupName(currentName);
+    setGroupRenameOpen(true);
+  };
+
+  const handleSaveGroupName = () => {
+    if (groupToRename && newGroupName.trim()) {
+      setCustomGroupNames({
+        ...customGroupNames,
+        [groupToRename]: newGroupName.trim()
+      });
+      setGroupRenameOpen(false);
+      setGroupToRename(null);
+      
+      toast({
+        title: "Group Renamed",
+        description: "Group name updated successfully",
+      });
+    }
+  };
+
+  const handleDeleteClick = (groupId: WalletGroup) => {
+    if (groupId === 'main' || groupId === 'bundles') {
+      toast({
+        title: "Protected Wallet Group",
+        description: "Main Wallets and Bundle Wallets groups cannot be deleted.",
+        variant: "destructive"
+      });
+      return;
+    }
+    
+    setGroupToDelete(groupId);
+    setDeleteGroupDialogOpen(true);
+  };
+
+  const handleDeleteGroup = async () => {
+    if (!groupToDelete) return;
+    
+    try {
+      console.log(`Attempting to delete group: ${groupToDelete}`);
+      
+      // Get all wallets in this group
+      const groupWallets = (wallets as unknown as ClientWallet[]).filter(
+        wallet => wallet.groupName === groupToDelete && !wallet.archived
+      );
+      
+      console.log(`Found ${groupWallets.length} wallets to delete in group: ${groupToDelete}`);
+      
+      // First archive all wallets in the group
+      for (const wallet of groupWallets) {
+        console.log(`Archiving wallet: ${wallet.publicKey}`);
+        await toggleArchive(wallet.publicKey);
+      }
+      
+      // Then delete the archived wallets
+      for (const wallet of groupWallets) {
+        console.log(`Deleting wallet: ${wallet.publicKey}`);
+        await deleteWallet(wallet.publicKey);
+      }
+      
+      // Remove custom name if exists
+      if (customGroupNames[groupToDelete]) {
+        console.log(`Removing custom name for group: ${groupToDelete}`);
+        const updatedNames = { ...customGroupNames };
+        delete updatedNames[groupToDelete];
+        setCustomGroupNames(updatedNames);
+      }
+      
+      // Add group to deleted groups list
+      console.log(`Adding ${groupToDelete} to deleted groups list`);
+      setDeletedGroups(prev => [...prev, groupToDelete]);
+      
+      // Switch to main group
+      setActiveGroup('main');
+      
+      toast({
+        title: "Group Deleted",
+        description: `The group "${getGroupDisplayName(groupToDelete)}" and all its wallets have been deleted.`,
+      });
+      
+      // Refresh wallet list
+      await loadWallets();
+    } catch (error) {
+      console.error('Error deleting group:', error);
+      toast({
+        title: "Error",
+        description: error instanceof Error ? error.message : "Failed to delete group",
+        variant: "destructive",
+      });
+    } finally {
+      setDeleteGroupDialogOpen(false);
+      setGroupToDelete(null);
+    }
+  };
+
+  const getGroupDisplayName = (groupId: string): string => {
+    if (customGroupNames[groupId]) {
+      return customGroupNames[groupId];
+    }
+    const group = WALLET_GROUPS.find(g => g.id === groupId);
+    return group ? group.name : groupId;
+  };
+
+  // Check if the group should have standard wallet features (like main and dev)
+  const hasStandardWalletFeatures = (group: WalletGroup): boolean => {
+    return group === 'main' || group === 'dev';
+  };
+
+  const filteredWallets = (wallets as unknown as ClientWallet[]).filter(wallet => {
+    const matchesSearch = (wallet.name || "").toLowerCase().includes(searchTerm.toLowerCase()) ||
                          wallet.publicKey.toLowerCase().includes(searchTerm.toLowerCase());
     const matchesArchived = wallet.archived === showArchived;
     const matchesGroup = wallet.groupName === activeGroup;
@@ -133,16 +352,45 @@ export function WalletList() {
 
         {/* Group Navigation */}
         <div className="flex gap-2 mt-4 mb-2 overflow-x-auto pb-2">
-          {WALLET_GROUPS.map(group => (
-            <Button
-              key={group.id}
-              variant={activeGroup === group.id ? "default" : "outline"}
-              onClick={() => setActiveGroup(group.id)}
-              className="min-w-[120px]"
-            >
-              <Wallet className="mr-2 h-4 w-4" />
-              {group.name}
-            </Button>
+          {WALLET_GROUPS
+            .filter(group => !deletedGroups.includes(group.id)) // Filter out deleted groups
+            .map(group => (
+            <div key={group.id} className="flex items-center">
+              <Button
+                variant={activeGroup === group.id ? "default" : "outline"}
+                onClick={() => setActiveGroup(group.id as WalletGroup)}
+                className="min-w-[120px] relative"
+              >
+                <Wallet className="mr-2 h-4 w-4" />
+                {getGroupDisplayName(group.id)}
+              </Button>
+              <DropdownMenu>
+                <DropdownMenuTrigger asChild>
+                  <Button
+                    variant="ghost"
+                    size="sm"
+                    className="h-8 w-8 ml-1 px-0"
+                  >
+                    <MoreVertical className="h-4 w-4" />
+                  </Button>
+                </DropdownMenuTrigger>
+                <DropdownMenuContent align="end">
+                  <DropdownMenuItem onClick={() => handleRenameClick(group.id as WalletGroup)}>
+                    <Edit className="mr-2 h-4 w-4" />
+                    Rename Group
+                  </DropdownMenuItem>
+                  {group.id !== 'main' && group.id !== 'bundles' && (
+                    <DropdownMenuItem 
+                      onClick={() => handleDeleteClick(group.id as WalletGroup)}
+                      className="text-destructive focus:text-destructive"
+                    >
+                      <Trash2 className="mr-2 h-4 w-4" />
+                      Delete Group
+                    </DropdownMenuItem>
+                  )}
+                </DropdownMenuContent>
+              </DropdownMenu>
+            </div>
           ))}
         </div>
 
@@ -275,7 +523,27 @@ export function WalletList() {
                         publicKey={wallet.publicKey}
                         walletName={wallet.name}
                       />
-                      {activeGroup !== 'cex' && (
+                      {hasStandardWalletFeatures(activeGroup) && (
+                        <>
+                          <SendSolDialog
+                            senderPublicKey={wallet.publicKey}
+                            senderBalance={wallet.balance}
+                          />
+                          <AirdropButton 
+                            publicKey={wallet.publicKey} 
+                            onSuccess={refreshBalances}
+                          />
+                          <Button
+                            variant="outline"
+                            size="sm"
+                            onClick={() => handleShowPrivateKey(wallet.publicKey)}
+                          >
+                            <Eye className="h-4 w-4" />
+                          </Button>
+                        </>
+                      )}
+                      {/* Always show Send SOL for non-CEX wallets */}
+                      {!hasStandardWalletFeatures(activeGroup) && activeGroup !== 'cex' && activeGroup !== 'sniper' && activeGroup !== 'bundles' && (
                         <>
                           <SendSolDialog
                             senderPublicKey={wallet.publicKey}
@@ -305,6 +573,17 @@ export function WalletList() {
                           <Archive className="h-4 w-4" />
                         )}
                       </Button>
+                      {/* Add delete button only for archived wallets */}
+                      {wallet.archived && (
+                        <Button
+                          variant="outline"
+                          size="sm"
+                          className="text-destructive hover:bg-destructive hover:text-destructive-foreground"
+                          onClick={() => setWalletToDelete(wallet.publicKey)}
+                        >
+                          <Trash2 className="h-4 w-4" />
+                        </Button>
+                      )}
                     </div>
                   </div>
                 </CardContent>
@@ -366,7 +645,7 @@ export function WalletList() {
                 ⚠️ Security Warning
               </p>
               <p className="text-sm text-muted-foreground">
-                This is your wallet's private key. Never share it with anyone. Anyone with access to this key will have full control over your wallet and funds.
+                This is your wallet&apos;s private key. Never share it with anyone. Anyone with access to this key will have full control over your wallet and funds.
               </p>
             </div>
           </div>
@@ -381,6 +660,94 @@ export function WalletList() {
           defaultGroup={createWalletGroup}
         />
       )}
+
+      {/* Delete Wallet Confirmation Dialog */}
+      <Dialog open={!!walletToDelete} onOpenChange={(isOpen) => {
+        if (!isOpen) setWalletToDelete(null);
+      }}>
+        <DialogContent>
+          <DialogHeader>
+            <DialogTitle>Delete Wallet</DialogTitle>
+            <DialogDescription>
+              This action cannot be undone. This will permanently delete your wallet from the database.
+            </DialogDescription>
+          </DialogHeader>
+          <div className="p-4 bg-muted rounded-lg text-center">
+            <p className="text-destructive font-medium">Are you sure you want to delete this wallet?</p>
+          </div>
+          <DialogFooter>
+            <Button variant="outline" onClick={() => setWalletToDelete(null)}>
+              Cancel
+            </Button>
+            <Button 
+              variant="destructive" 
+              onClick={() => {
+                if (walletToDelete) {
+                  handleDeleteWallet(walletToDelete);
+                  setWalletToDelete(null);
+                }
+              }}
+            >
+              Delete Permanently
+            </Button>
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
+
+      {/* Add the Rename Group Dialog */}
+      <Dialog open={groupRenameOpen} onOpenChange={setGroupRenameOpen}>
+        <DialogContent>
+          <DialogHeader>
+            <DialogTitle>Rename Wallet Group</DialogTitle>
+            <DialogDescription>
+              Enter a new name for this wallet group.
+            </DialogDescription>
+          </DialogHeader>
+          <div className="space-y-4 py-2">
+            <Input
+              value={newGroupName}
+              onChange={(e) => setNewGroupName(e.target.value)}
+              placeholder="Enter new group name"
+              autoFocus
+            />
+          </div>
+          <DialogFooter>
+            <Button variant="outline" onClick={() => setGroupRenameOpen(false)}>
+              Cancel
+            </Button>
+            <Button onClick={handleSaveGroupName}>
+              <Save className="mr-2 h-4 w-4" />
+              Save
+            </Button>
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
+
+      {/* Delete Group Confirmation Dialog */}
+      <Dialog open={deleteGroupDialogOpen} onOpenChange={setDeleteGroupDialogOpen}>
+        <DialogContent>
+          <DialogHeader>
+            <DialogTitle>Delete Group</DialogTitle>
+            <DialogDescription>
+              This action cannot be undone. This will permanently delete the group and all its wallets from the database.
+            </DialogDescription>
+          </DialogHeader>
+          <div className="p-4 bg-muted rounded-lg text-center">
+            <p className="text-destructive font-medium">Are you sure you want to delete this group?</p>
+          </div>
+          <DialogFooter>
+            <Button variant="outline" onClick={() => setDeleteGroupDialogOpen(false)}>
+              Cancel
+            </Button>
+            <Button 
+              variant="destructive" 
+              onClick={handleDeleteGroup}
+            >
+              Delete Permanently
+            </Button>
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
     </Card>
   );
 }
