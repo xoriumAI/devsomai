@@ -1,13 +1,19 @@
 "use client";
 
 import React, { createContext, useContext, useEffect, useState } from 'react';
+// Import types from our mock implementation instead of directly from supabase-js
 import { 
   User,
-  Session,
-  AuthError
-} from '@supabase/supabase-js';
+  Session
+} from '@/lib/supabase-client';
 import { getSupabaseBrowser } from '@/lib/supabase-client';
 import { useRouter } from 'next/navigation';
+
+// Define AuthError type here since we no longer import it from supabase-js
+type AuthError = {
+  message: string;
+  status?: number;
+};
 
 type AuthContextType = {
   user: User | null;
@@ -120,7 +126,7 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
     
     // Set up auth state change listener
     const { data: { subscription } } = supabaseClient.auth.onAuthStateChange(
-      (event, newSession) => {
+      (event: string, newSession: Session | null) => {
         console.log("Auth state change event:", event);
         console.log("New session:", newSession ? `exists for ${newSession.user.id}` : "null");
         
