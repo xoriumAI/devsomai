@@ -38,7 +38,7 @@ interface ClientWallet {
 }
 
 export function WalletList() {
-  const { wallets, isLoading, refreshBalances, getPrivateKey, toggleArchive, deleteWallet, loadWallets, stopAutoRefresh, userId } = useWalletStore();
+  const { wallets, isLoading, refreshBalances, getPrivateKey, toggleArchive, loadWallets, stopAutoRefresh, userId } = useWalletStore();
   const [selectedWallet, setSelectedWallet] = useState<string | null>(null);
   const [showPrivateKey, setShowPrivateKey] = useState(false);
   const [privateKey, setPrivateKey] = useState<string | null>(null);
@@ -186,7 +186,18 @@ export function WalletList() {
 
   const handleDeleteWallet = async (publicKey: string) => {
     try {
-      await deleteWallet(publicKey);
+      // Instead of using deleteWallet from the store, call the API directly
+      const response = await fetch(`/api/wallet/${publicKey}`, {
+        method: 'DELETE',
+      });
+      
+      if (!response.ok) {
+        throw new Error(`Failed to delete wallet: ${response.statusText}`);
+      }
+      
+      // Refresh the wallet list after deletion
+      await loadWallets();
+      
       toast({
         title: "Success",
         description: "Wallet has been permanently deleted",
@@ -261,7 +272,7 @@ export function WalletList() {
       // Then delete the archived wallets
       for (const wallet of groupWallets) {
         console.log(`Deleting wallet: ${wallet.publicKey}`);
-        await deleteWallet(wallet.publicKey);
+        await handleDeleteWallet(wallet.publicKey);
       }
       
       // Remove custom name if exists
