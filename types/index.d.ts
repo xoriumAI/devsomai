@@ -28,7 +28,7 @@ declare module "lucide-react" {
 declare module "@/store/wallet-store" {
   export interface WalletStore {
     addWallet: (privateKey: string, publicKey: string, name?: string) => Promise<void>;
-    userId: string | null;
+    userId: string | null; // Added on timestamp: 2025-03-28T17:55:00Z
   }
 }
 
