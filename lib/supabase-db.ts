@@ -1,6 +1,19 @@
-import { supabase } from './supabase';
+import { createClient } from '@supabase/supabase-js';
 import { generateKeyPair } from './crypto';
 import { encrypt, decrypt } from './encryption';
+
+// Get environment variables with fallbacks
+const supabaseUrl = process.env.NEXT_PUBLIC_SUPABASE_URL || 'https://devsomain8n.lucidsro.com';
+const supabaseAnonKey = process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY || 'eyJ0eXAiOiJKV1QiLCJhbGciOiJIUzI1NiJ9.eyJpc3MiOiJzdXBhYmFzZSIsImlhdCI6MTc0MzE2MDA4MCwiZXhwIjo0ODk4ODMzNjgwLCJyb2xlIjoiYW5vbiJ9.kqwFfG5Jmw4HasqGHwu17cFBruX4c_qZGS05iyurZco';
+
+// Create a Supabase client
+const supabase = createClient(supabaseUrl, supabaseAnonKey, {
+  auth: {
+    storageKey: 'supabase-auth-token',
+    persistSession: true,
+    autoRefreshToken: true,
+  }
+});
 
 // Try to pre-load environment variables if we're in development
 (function loadEnv() {
