@@ -6,7 +6,7 @@ import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogDescription, DialogFooter } from "@/components/ui/dialog";
 import { Search, Filter, RefreshCw, Eye, EyeOff, Copy, Check, Archive, ArchiveRestore, Plus, Wallet, Send, Trash2, Edit, Save, MoreVertical } from "lucide-react";
-import { useWalletStore, WalletStore } from "@/store/wallet-store";
+import { useWalletStore } from "@/store/wallet-store";
 import { validatePrivateKey, WALLET_GROUPS, WalletGroup } from "@/lib/wallet";
 import { useToast } from "@/hooks/use-toast";
 import { CreateWalletDialog } from "./create-wallet-dialog";
@@ -38,7 +38,7 @@ interface ClientWallet {
 }
 
 export function WalletList() {
-  const { wallets, isLoading, refreshBalances, getPrivateKey, toggleArchive, loadWallets, stopAutoRefresh, userId } = useWalletStore() as WalletStore;
+  const { wallets, isLoading, refreshBalances, getPrivateKey, toggleArchive, deleteWallet, loadWallets, stopAutoRefresh, userId } = useWalletStore();
   const [selectedWallet, setSelectedWallet] = useState<string | null>(null);
   const [showPrivateKey, setShowPrivateKey] = useState(false);
   const [privateKey, setPrivateKey] = useState<string | null>(null);
@@ -99,7 +99,7 @@ export function WalletList() {
     } else {
       setDeletedGroups([]);
     }
-  }, [userId]);
+  }, [userId, getGroupNamesStorageKey, getDeletedGroupsStorageKey]);
 
   // Save custom group names to localStorage with user-specific key
   useEffect(() => {
@@ -109,7 +109,7 @@ export function WalletList() {
     console.log(`Saving wallet group names for user: ${userId} with key: ${storageKey}`);
     
     localStorage.setItem(storageKey, JSON.stringify(customGroupNames));
-  }, [customGroupNames, userId]);
+  }, [customGroupNames, userId, getGroupNamesStorageKey]);
 
   // Save deleted groups to localStorage
   useEffect(() => {
@@ -119,7 +119,7 @@ export function WalletList() {
     console.log(`Saving deleted groups for user: ${userId} with key: ${storageKey}`, deletedGroups);
     
     localStorage.setItem(storageKey, JSON.stringify(deletedGroups));
-  }, [deletedGroups, userId]);
+  }, [deletedGroups, userId, getDeletedGroupsStorageKey]);
 
   useEffect(() => {
     console.log('Loading wallets...');
@@ -186,18 +186,7 @@ export function WalletList() {
 
   const handleDeleteWallet = async (publicKey: string) => {
     try {
-      // Instead of using deleteWallet from the store, call the API directly
-      const response = await fetch(`/api/wallet/${publicKey}`, {
-        method: 'DELETE',
-      });
-      
-      if (!response.ok) {
-        throw new Error(`Failed to delete wallet: ${response.statusText}`);
-      }
-      
-      // Refresh the wallet list after deletion
-      await loadWallets();
-      
+      await deleteWallet(publicKey);
       toast({
         title: "Success",
         description: "Wallet has been permanently deleted",
@@ -272,7 +261,7 @@ export function WalletList() {
       // Then delete the archived wallets
       for (const wallet of groupWallets) {
         console.log(`Deleting wallet: ${wallet.publicKey}`);
-        await handleDeleteWallet(wallet.publicKey);
+        await deleteWallet(wallet.publicKey);
       }
       
       // Remove custom name if exists

@@ -123,7 +123,7 @@ export function TransactionHistory() {
       console.warn(`Error fetching transactions for wallet ${publicKey}:`, error);
       return [];
     }
-  }, []);
+  }, [getConnection, sleep]);
 
   const fetchTransactions = useCallback(async () => {
     if (activeWallets.length === 0) return;

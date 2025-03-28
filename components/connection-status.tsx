@@ -87,7 +87,7 @@ export function ConnectionStatus() {
         clearInterval(interval);
       };
     }
-  }, [settings]); // Run when settings are loaded
+  }, [settings, handleTest, isTesting]); // Include handleTest and isTesting dependencies
 
   const formatLatency = (latency: number | null) => {
     if (latency === null) return 'N/A';

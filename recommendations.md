@@ -26,9 +26,9 @@ The application has encountered several dependency issues with Supabase librarie
 - Add unit tests for the Supabase client facade
 - Remove deprecated Supabase implementations once migration is complete
 
-### 2. React Hook Dependency Arrays
+### 2. React Hook Dependency Arrays ✅ IMPLEMENTED
 
-Multiple components have missing dependencies in useEffect/useCallback hooks:
+Multiple components had missing dependencies in useEffect/useCallback hooks:
 
 ```typescript
 // In components/connection-status.tsx
@@ -47,10 +47,16 @@ useEffect(() => {
 }, []); // Missing 'getDeletedGroupsStorageKey' and 'getGroupNamesStorageKey' dependencies
 ```
 
-**Recommendation**:
-- Review and fix all dependency arrays in React hooks
-- Consider using the React ESLint plugin's 'exhaustive-deps' rule more strictly
-- For intentional omissions, add explicit comments explaining why
+**Solution Implemented**:
+- Fixed dependency arrays in all affected components:
+  - Added `handleTest` and `isTesting` to the useEffect dependency array in `connection-status.tsx`
+  - Added `getConnection` and `sleep` to the useCallback dependency array in `transaction-history.tsx`
+  - Added `getGroupNamesStorageKey` and `getDeletedGroupsStorageKey` to the useEffect dependency arrays in `wallet-list.tsx`
+
+**Next Steps**:
+- Add ESLint rule `react-hooks/exhaustive-deps` to catch similar issues in the future
+- Review other components for similar missing dependencies
+- Consider adding explicit comments for intentional dependency omissions
 
 ### 3. Unsafe Type Casts
 
