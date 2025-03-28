@@ -1,7 +1,6 @@
-import { createClient } from '@supabase/supabase-js';
+import { supabase } from './supabase';
 import { generateKeyPair } from './crypto';
 import { encrypt, decrypt } from './encryption';
-import { supabase } from './supabase';
 
 // Try to pre-load environment variables if we're in development
 (function loadEnv() {
@@ -12,36 +11,6 @@ import { supabase } from './supabase';
       console.log('dotenv not available');
     }
   }
-})();
-
-// Get environment variables with strict validation
-const supabaseUrl = process.env.NEXT_PUBLIC_SUPABASE_URL;
-const supabaseServiceRoleKey = process.env.SUPABASE_SERVICE_ROLE_KEY;
-
-// Final URL and key to use
-const finalUrl = supabaseUrl || 'https://devsomain8n.lucidsro.com';
-const finalKey = supabaseServiceRoleKey || 'eyJ0eXAiOiJKV1QiLCJhbGciOiJIUzI1NiJ9.eyJpc3MiOiJzdXBhYmFzZSIsImlhdCI6MTc0MzE2MDA4MCwiZXhwIjo0ODk4ODMzNjgwLCJyb2xlIjoic2VydmljZV9yb2xlIn0.k90dfmi4jLGYe4SrQZPWEj34gIKBtKtbIcQh05JcVzs';
-
-// Server-side Supabase admin client with service role
-// Use a singleton pattern to avoid multiple instances
-let supabaseAdminInstance: ReturnType<typeof createClient> | null = null;
-
-export const supabaseAdmin = (() => {
-  if (supabaseAdminInstance) {
-    return supabaseAdminInstance;
-  }
-  
-  // Create a new client with admin privileges and ensure no session conflicts
-  supabaseAdminInstance = createClient(finalUrl, finalKey, {
-    auth: {
-      autoRefreshToken: false,
-      persistSession: false,
-      storageKey: 'supabase-admin-auth-token-v1',
-      detectSessionInUrl: false,
-    },
-  });
-  
-  return supabaseAdminInstance;
 })();
 
 // Types
@@ -149,7 +118,7 @@ export async function getUserSubscription(userId: string): Promise<UserSubscript
 // Get all wallets for a user
 export async function getWallets(userId: string): Promise<Wallet[]> {
   try {
-    const { data, error } = await supabaseAdmin
+    const { data, error } = await supabase
       .from('wallets')
       .select('*')
       .eq('user_id', userId)
@@ -170,7 +139,7 @@ export async function getWallets(userId: string): Promise<Wallet[]> {
 // Get a single wallet by its public key
 export async function getWallet(publicKey: string, userId: string): Promise<Wallet | null> {
   try {
-    const { data, error } = await supabaseAdmin
+    const { data, error } = await supabase
       .from('wallets')
       .select('*')
       .eq('public_key', publicKey)
